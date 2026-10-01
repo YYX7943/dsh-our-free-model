@@ -204,7 +204,7 @@ index.js      host half: adapter registration, catalog + availability probes,
 adapter/      kernel seam: the only module in the package allowed to import
               @deepseek-ai/* (kernel.js: attribution User-Agent with a literal fallback)
 src/adapter.js  structural LlmAdapter: providerInfo, listModels, resolveModel,
-                prepareCall, stream, providerRetryPolicy
+                prepareCall, stream, providerRetryPolicy, imageRequestPricing
 src/upstream.js gateway identity: credentials, session/request id minting,
                 tool fingerprint, endpoint selection per wire
 src/stream.js   three wire decoders (chat / messages / responses) normalised to
@@ -264,6 +264,18 @@ These are recorded here because they will bite any provider plugin:
    serving the app. The shape that works is `ctx.inject(deps, callback)`: give the
    services you need their own fiber and let *it* wait, instead of guessing once at
    load time.
+4. **A missing `imageRequestPricing()` makes every compaction fail with
+   `gateway/internal`.** The kernel forwards this call unguarded: it looks the
+   adapter up with `?.` but invokes the method without checking it exists. So any
+   adapter that does not implement it — every structural one that does not extend
+   the base class — throws
+   `this.adapters.get(...)?.adapter.imageRequestPricing is not a function` the
+   moment compaction reaches it. The `LlmAdapter` base class already defaults to
+   `undefined`, and `priceSurface` treats `undefined` as the legal "fall back to
+   the fixed heuristic" input, so an explicit empty implementation returning
+   `undefined` is enough — this gateway publishes no vision-token accounting to
+   report anyway. **Only the compaction path consults this table**; ordinary turns
+   never do.
 
 ### Why the response is read by body shape, not by `Content-Type`
 

@@ -186,7 +186,7 @@ index.js        Host 半身：适配器注册、清单与可用性探测、设�
 adapter/        内核接缝：全包唯一允许 import @deepseek-ai/* 的地方
                 （kernel.js：attribution User-Agent，失败降级为字面量）
 src/adapter.js  结构性 LlmAdapter：providerInfo、listModels、resolveModel、
-                prepareCall、stream、providerRetryPolicy
+                 prepareCall、stream、providerRetryPolicy、imageRequestPricing
 src/upstream.js 网关身份：凭据、session/request id 铸造、工具指纹、按线协议选端点
 src/stream.js   三种线协议解码（chat / messages / responses）归一为 harness StreamChunk，
                 并做不相交的 token 计数
@@ -238,6 +238,13 @@ client.js       浏览器半身：手写 ModuleLoader bundle，无构建步骤
    server，而是因为插件比 web 半身先加载——于是设置页路由一条都没挂上。正解是
    `ctx.inject(deps, callback)`：为需要的服务开一条自己的 fiber，让它去待命，
    而不是在加载的那一瞬间猜一次。
+4. **`imageRequestPricing()` 缺了会让每次压缩都报 `gateway/internal`。** 内核转发这
+   个方法时不设防：provider 查表用了 `?.`，方法本身直接调用。所以任何**没有**实现它
+   的适配器（结构性的、没继承基类的都在此列）只要被 compact 走到，就抛
+   `this.adapters.get(...)?.adapter.imageRequestPricing is not a function`。
+   `LlmAdapter` 基类有默认实现，`priceSurface` 也把 `undefined` 当作"退回固定启发式"
+   的合法输入，所以显式写一个返回 `undefined` 的空实现就够了——这条网关本来也没有
+   官方视觉计费规则可报。**只有压缩路径查这张表**，普通对话不查。
 
 ### 为什么按 body 的形状而不是 `Content-Type` 读响应
 

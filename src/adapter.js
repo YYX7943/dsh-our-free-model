@@ -6,6 +6,11 @@
  * lets this plugin mount on more than one kernel line without importing a
  * version-pinned adapter base class.
  *
+ * That freedom is not free: there is no inherited default for any contract
+ * method, so every method the kernel may call has to be declared here, even
+ * the ones this route has no opinion about. `imageRequestPricing()` is the one
+ * that bites — see its comment below.
+ *
  * Two routes are published from one adapter instance, because the harness groups
  * the model picker strictly by provider route and offers no other grouping
  * field: `our-free-model` carries what this egress can use right now, and
@@ -72,6 +77,23 @@ export class FreeModelAdapter {
       maxDelayMs: 8000,
       jitterRatio: 0.2,
     })
+  }
+
+  /**
+   * This route declares no request-image pricing, so the token meter falls
+   * back to its own neutral image estimate.
+   *
+   * `ctx.llm` forwards this call unguarded — it looks the adapter up with `?.`
+   * but invokes the method without checking it exists — so an adapter that
+   * omits the method turns every compaction into
+   * `TypeError: ...imageRequestPricing is not a function`. Declaring it here
+   * keeps `/compact` working: the base class documents `undefined` as "this
+   * route prices no images", and `priceSurface` treats that as the fixed
+   * heuristic. That is the honest answer here anyway — this gateway publishes
+   * no vision-token accounting, so any figure we invented would be a guess.
+   */
+  imageRequestPricing() {
+    return undefined
   }
 
   /** Models this route advertises right now. */

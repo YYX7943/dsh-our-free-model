@@ -382,6 +382,8 @@ token，并非精确 tokenizer 校验。超限就停止恢复，不会无限续�
 | SSE 推送 | `hello`/`announcements`/`update`/`upgraded` 事件实测；热重载后自动重连 |
 | 思考强度传递 | light/balanced/deep 三档实测：reasoning 2048（被预算截断）/ 3386 / 3522，输出单调上升 |
 | 地区门 | 受限模型报 `REGION_BLOCKED` 并留在自己的分组 |
+| 门禁漂移 | `FreeTierError` / "only be used from within OpenCode" 归 `GATE_DRIFT` 而不是 `INVALID_CREDENTIAL`，且不在可重试集合里——重发同一个身份只会拿到同一个答案；判据不依赖 `status`，流内拒绝（`status` 为 `undefined`）同样命中。实测：`403 code=GATE_DRIFT type=FreeTierError`，地区与配额两支分类不变 |
+| 出站诊断开关 | `OUR_FREE_MODEL_DEBUG=1` 与 `~/.dsh/our-free-model/debug` 两条通路实测：开 → 逐条打印端点、`x-opencode-*` 门禁头、会话/请求 id、UA、声明的工具名与角色；关 → 零输出。轨迹里塞入机密串反查，0 命中 |
 | 转发端口 | `/v1/models`、流式与非流式 `/v1/chat/completions`；无 Key 请求被拒 `401` |
 | 界面文案 | 无乱码；上游厂名只出现在仓库文档与公告正文两处——#8 要求的披露得有个用户看得见的位置，公告算说明位。模型选择器、设置页与报错文案里始终不出现 |
 
@@ -421,6 +423,7 @@ node scripts/release-e2e.mjs        # 用真实的 feed/manifest.json 装一遍�
 node scripts/picker-test.mjs        # 选择器只广播真能用的模型，且永不广播空集合
 node scripts/tui-test.mjs           # 没有 web server 的 composition 里插件照样启动并出模型
 node scripts/host-selftest.mjs      # Host 半身端到端，会真实出网
+node scripts/reverify.mjs           # 门禁体检：目录 / 匿名门禁 / 逐模型三盏灯，门禁被改时退出码 1
 node scripts/build-manifest.mjs     # 发布：重新生成 feed/manifest.json（发布文件哈希清单）
 ```
 
@@ -428,11 +431,27 @@ node scripts/build-manifest.mjs     # 发布：重新生成 feed/manifest.json�
 `reasoning_effort` 空操作采样、预算方言、悬空工具调用、工具名字符集规则、
 原始读包时刻（`batch-delivery`）、逐帧到达与 usage 对照（`decode-window`）、
 长回答会不会被额度截断（`long-answer`）。
-其中六个跑的是本插件自己的代码，从仓库根目录就能执行
-（`node scripts/probes/pairing-repair.mjs`）；其余借助一个第三方 SSE 客户端直连上游，
-模块路径写成了那个仓库的样子，所以只作为取证记录保留，不能当测试套件用。
-它们都没有接进 `npm test`——那是取证记录，不是套件；`npm test` 跑的是上面这些不需要
-出网、不花免费额度的离线检查。
+它们现在**全部** import 本插件自己的 `src/upstream.js`（会话/请求 id 铸造、工具指纹、
+`CLIENT_UA`），从仓库根目录直接执行即可（`node scripts/probes/free-lane-survey.mjs`）。
+早先版本 import 的是一个仓库里并不存在的第三方 SSE 客户端目录，八个脚本一加载就
+`ERR_MODULE_NOT_FOUND`——恰好在上游改门禁、最需要它们的时候全部失效，所以现在连
+UA 也不再写死，而是用插件真实发出的那个 `CLIENT_UA`，探针测的身份就是真发的身份。
+它们都没有接进 `npm test`——那是取证记录，不是套件，而且会真实出网、花免费额度；
+`npm test` 跑的是上面这些不需要出网、不花免费额度的离线检查。
+
+### 出站诊断开关
+
+门禁再变的时候，唯一的自救手段是知道"到底发出去了什么"：
+
+```bash
+OUR_FREE_MODEL_DEBUG=1 dsh …       # shell / headless
+touch ~/.dsh/our-free-model/debug  # 桌面端没有 shell 环境可 export；建/删立即生效，不用重启
+```
+
+打开后每条出站请求往 stderr 打一行：端点、`x-opencode-*` 门禁头、会话/请求 id、
+最终 User-Agent、是否匿名，以及请求体的**形状**（模型、线协议、角色、声明的工具名、
+预算上限）。**不打**消息内容、system prompt、工具参数，也不打凭据——会泄漏东西的
+诊断开关只会教人一直开着它。要判断门禁改的是哪一条，看 `FAIL` 那一行的 `code` / `type`。
 
 需要 Node `^22.19.0 || >=24.0.0`。无安装步骤、无依赖。
 
@@ -456,7 +475,7 @@ npm run typecheck                 # tsc --noEmit，严格检查 adapter/ 接缝�
 
 关于隐私与信任，把话说清楚：
 
-- **没有号池、没有中转、没有二道贩子**。当前版本不存在第二条车道，上表四行就是这个插件会出网的全部目标；`npm test` 的离线套件一步不出网，只有 `scripts/host-selftest.mjs` 与 `scripts/probes/` 会主动去打这些地址，而它们要人手动运行。将来若加入新的来源，这一节会先于功能更新，不会默认把流量分给别人。
+- **没有号池、没有中转、没有二道贩子**。当前版本不存在第二条车道，上表四行就是这个插件会出网的全部目标；`npm test` 的离线套件一步不出网，只有 `scripts/host-selftest.mjs`、`scripts/reverify.mjs` 与 `scripts/probes/` 会主动去打这些地址，而它们要人手动运行。将来若加入新的来源，这一节会先于功能更新，不会默认把流量分给别人。
 - **你的 prompt、工具结果与随附图像会作为正常推理请求发给这个上游**——与调用任何一家模型 API 没有区别。除此之外插件不上传任何东西：用量看板的数据、设置、转发 Key 全部只落在本机 `DSH_HOME/our-free-model/`。
 - **免密不等于无人管**：这条车道靠 `x-opencode-*` 指纹识别客户端、按会话计免费额度，会因地区回 403、因超量回 429。模型集合与额度政策由上游决定，随时可能变化；插件能做的只是如实把不可用从选择器里摘掉。
 - 这一节是仓库文档。应用内的选择器、设置页与报错文案仍然不出现上游厂名（那条约定见[验收情况](#验收情况)）。

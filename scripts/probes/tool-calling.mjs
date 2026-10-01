@@ -1,5 +1,9 @@
-import { generateSessionId, generateRequestId } from "./open-sse/executors/opencode.js";
-import { applyFingerprintTools } from "./open-sse/utils/opencodeFingerprint.js";
+import {
+  mintSessionId as generateSessionId,
+  mintRequestId as generateRequestId,
+  applyFingerprint as applyFingerprintTools,
+  CLIENT_UA,
+} from "../../src/upstream.js";
 import { writeFileSync } from "fs";
 
 const session = generateSessionId();
@@ -7,7 +11,7 @@ const B = "https://opencode.ai";
 const HEADERS = {
   "Content-Type": "application/json",
   "Authorization": "Bearer public",
-  "User-Agent": "opencode/1.18.31",
+  "User-Agent": CLIENT_UA,
   "x-opencode-client": "desktop",
   "x-opencode-session": session,
   "x-opencode-project": "global",

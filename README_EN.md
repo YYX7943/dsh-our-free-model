@@ -440,6 +440,8 @@ browser and inside the DSHEAC AIO desktop window:
 | SSE push | `hello`/`announcements`/`update`/`upgraded` events verified; EventSource reconnects after a hot reload |
 | Effort propagation | light/balanced/deep measured live: reasoning 2048 (budget-truncated) / 3386 / 3522, output rising monotonically |
 | Region gating | Region-blocked model surfaces as `REGION_BLOCKED` and stays in its own group |
+| Gate drift | `FreeTierError` / "only be used from within OpenCode" classifies as `GATE_DRIFT` rather than `INVALID_CREDENTIAL`, and is deliberately outside the retryable set — re-sending the same identity gets the same answer. The discriminator does not depend on `status`, so an in-stream refusal (where `status` is `undefined`) is caught too. Measured: `403 code=GATE_DRIFT type=FreeTierError`, with the region and quota branches unchanged |
+| Outbound diagnostic switch | Both paths measured: `OUR_FREE_MODEL_DEBUG=1` and `~/.dsh/our-free-model/debug`. On → one line per request with endpoint, `x-opencode-*` gate headers, session/request ids, User-Agent, declared tool names and roles; off → no output at all. A planted secret string searched back through the trace: zero hits |
 | Forward listener | `/v1/models`, streaming and non-streaming `/v1/chat/completions`, unauthenticated requests rejected `401` |
 | UI strings | No mojibake; the upstream vendor name appears in exactly two places — the repository docs and the announcement body, since #8's disclosure needs a place a user can actually see. The model picker, the settings page and error copy still never name it |
 Not verified, so stated plainly: the **final OS-level notification rendering**
@@ -481,19 +483,41 @@ node scripts/release-e2e.mjs        # upgrade against the real manifest, and pro
 node scripts/picker-test.mjs        # only usable models are advertised, and the picker never goes empty
 node scripts/tui-test.mjs           # the plugin activates and serves with no web server in the composition
 node scripts/host-selftest.mjs      # host half end to end against the live upstream
+node scripts/reverify.mjs           # gate check: catalogue / anonymous gate / per-model, exit 1 when the gate moved
 ```
 
 `scripts/probes/` holds the one-off evidence scripts behind the findings report —
 capability matrix, region gate, the `reasoning_effort` no-op sampling, budget
 dialects, dangling tool calls, tool-name charset rules, raw read timestamps
 (`batch-delivery`), per-frame arrival against final usage (`decode-window`),
-and whether a long answer survives its ceiling (`long-answer`). Six of them
-exercise this plugin's own code and run from the repo root
-(`node scripts/probes/pairing-repair.mjs`); the rest reach the upstream through a
-third-party SSE client and assume that checkout's module paths, so they are
-recorded as evidence rather than offered as a test suite. None of them is wired
-into `npm test`, which runs the offline checks above — no network, no free-lane
-quota spent.
+and whether a long answer survives its ceiling (`long-answer`). They now **all**
+import this plugin's own `src/upstream.js` (session/request id minting, tool
+fingerprint, `CLIENT_UA`) and run from the repo root
+(`node scripts/probes/free-lane-survey.mjs`). The earlier versions imported a
+third-party SSE client directory that was never in the tree, so eight of them
+died with `ERR_MODULE_NOT_FOUND` on load — at exactly the moment upstream moves
+the gate and they are needed most. The User-Agent is no longer hard-coded
+either: the probes now send `CLIENT_UA`, the identity the plugin really sends.
+None of them is wired into `npm test`, which runs the offline checks above — no
+network, no free-lane quota spent.
+
+### Outbound diagnostic switch
+
+When the gate moves again, the only way to help yourself is a record of what
+actually left the machine:
+
+```bash
+OUR_FREE_MODEL_DEBUG=1 dsh …       # shell / headless
+touch ~/.dsh/our-free-model/debug  # desktop has no shell environment to export into; takes effect immediately, no restart
+```
+
+Each outbound request then writes one line to stderr: endpoint, the
+`x-opencode-*` gate headers, session and request ids, the final User-Agent,
+whether the request is anonymous, and the **shape** of the body (model, wire,
+roles, declared tool names, budget). It never prints message content, the system
+prompt, tool arguments, or a credential — a diagnostic that leaks teaches people
+to leave it on. To see which gate condition changed, read `code` / `type` on the
+`FAIL` line.
 
 Requires Node `^22.19.0 || >=24.0.0`. No install step, no dependencies.
 
@@ -518,7 +542,7 @@ On privacy and trust, plainly:
 - **No account pool, no relay, no reseller.** There is no second lane in this
   version; the four rows above are the complete set of destinations the plugin
   can contact. `npm test` touches no network at all, and the only things that do
-  are `scripts/host-selftest.mjs` and `scripts/probes/`, which you run by hand. If
+  are `scripts/host-selftest.mjs`, `scripts/reverify.mjs` and `scripts/probes/`, which you run by hand. If
   another source is ever added, this section is updated before the feature is.
 - **Your prompts, tool results and any attached images go to that upstream as an
   ordinary inference request** — the same as calling any model API. Nothing else

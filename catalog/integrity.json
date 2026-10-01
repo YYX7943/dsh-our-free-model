@@ -54,13 +54,13 @@
     },
     {
       "path": "README_EN.md",
-      "size": 53650,
-      "sha256": "12b5fb42037b5791ee6fdf9e39ceb7b22c56caa3ca79077d0815c009b56f89b1"
+      "size": 55643,
+      "sha256": "614a714349e50318d1bdb614845904cac67039e664474670e4241bd7831dd2a3"
     },
     {
       "path": "README.md",
-      "size": 50153,
-      "sha256": "b8e4a45f7abe744bfd4348a88c1ebc2842e332b7ce204c80afe166f21c406b27"
+      "size": 52010,
+      "sha256": "2ec6ad29e189f2a579095ea33993fb2c75e96ccd11b3314804f91dc10fb84c21"
     },
     {
       "path": "src/adapter.js",
@@ -76,6 +76,11 @@
       "path": "src/channel.js",
       "size": 1292,
       "sha256": "c1b80fdaac75fa320fd619b5dd09d796a8c4b1c8f58af07b921f548a5604c357"
+    },
+    {
+      "path": "src/debug.js",
+      "size": 4127,
+      "sha256": "0d9ec2d6a60146516af0ca67f4b2881f4d6a29e44b80db6faea3b8fc77cbb2e9"
     },
     {
       "path": "src/effort.js",
@@ -94,8 +99,8 @@
     },
     {
       "path": "src/http.js",
-      "size": 18671,
-      "sha256": "f635a964aa9e931d9f510eb8cbb7e9c3ca77e03674cdcbc6ed49e954356b7795"
+      "size": 19743,
+      "sha256": "98ba77d4e6457ac68ecdc917ebd1cef3654899af171032321f04c176c6826250"
     },
     {
       "path": "src/messages.js",

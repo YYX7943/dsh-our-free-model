@@ -29,12 +29,25 @@ export const CODE = {
   region: 'REGION_BLOCKED',
   quota: 'RATE_LIMIT',
   credential: 'INVALID_CREDENTIAL',
+  /**
+   * The anonymous lane refused the *client identity*, not the model and not a
+   * credential: `FreeTierError` / `MissingSessionID` / "only be used from
+   * within OpenCode". Folding this into `credential` was wrong twice over — the
+   * lane has no per-user credential to be invalid, and DSH routes codes rather
+   * than message text, so a gate change is only ever one upstream decision away
+   * from being reported as "your key is bad". It is not retryable: the next
+   * attempt sends the same identity and gets the same answer.
+   */
+  gate: 'GATE_DRIFT',
   transport: 'TRANSPORT',
   timeout: 'TIMEOUT',
   server: 'SERVER',
   empty: 'EMPTY_RESPONSE',
   aborted: 'ABORTED',
 }
+
+/** Appended to a gate refusal so the operator knows which lever to pull. */
+const GATE_GUIDANCE = ' — the anonymous free lane rejected this client identity (upstream changed the gate; this is not an API key problem). Wait for a plugin update, or re-check with scripts/reverify.mjs'
 
 export class UpstreamError extends Error {
   constructor(message, code, details = {}) {
@@ -56,6 +69,12 @@ export function classifyFailure(status, payload, retryAfterMs) {
   }
   if (status === 429 || type === 'FreeUsageLimitError' || /usage limit|rate limit/i.test(flat)) {
     return new UpstreamError(message, CODE.quota, { status, type, providerRetryAfterMs: retryAfterMs })
+  }
+  // Deliberately status-independent: a refusal can arrive inside a 200 stream,
+  // where `status` is not yet known (`stream.js` calls this with `undefined`).
+  if (type === 'FreeTierError' || type === 'MissingSessionID'
+    || /only be used|free tier can only/i.test(flat)) {
+    return new UpstreamError(`${message}${GATE_GUIDANCE}`, CODE.gate, { status, type })
   }
   if (status === 401 || status === 403) return new UpstreamError(message, CODE.credential, { status, type })
   if (type === 'ModelError' || /model is unavailable|not supported/.test(flat)) {

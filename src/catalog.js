@@ -13,8 +13,16 @@
 
 import { baseModelId, isResponsesModel } from './upstream.js'
 
-/** Ids that are free-tier without carrying the `-free` suffix. */
-const ALWAYS_FREE = new Set(['union-alpha', 'space-bunny-free'])
+/**
+ * Ids that are free-tier without carrying the `-free` suffix.
+ *
+ * `big-pickle` is the reason this set exists beyond a regex: it is a stealth id
+ * with no suffix, it is on the official Zen free list, and on 2026-10-01 it
+ * answered `Bearer public` with a tool call in 2.1 s from this egress — while
+ * every other unsuffixed id on the listing came back `401 AuthError Missing API
+ * key`. A suffix-only rule hid a working model from the picker.
+ */
+const ALWAYS_FREE = new Set(['union-alpha', 'space-bunny-free', 'big-pickle'])
 
 /**
  * Local capability baseline. `contextWindow`/`maxOutput` are the provider's
@@ -30,6 +38,9 @@ export const CAPABILITIES = [
   { match: /^ling/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 32768 },
   { match: /^space.?bunny/, vision: true, reasoning: true, contextWindow: 262144, maxOutput: 65536 },
   { match: /^union/, vision: true, reasoning: false, contextWindow: 262144, maxOutput: 131072 },
+  // Stealth id, no suffix: 200 K / 32 K is the published figure (pi.dev and the
+  // Zen free-model pages both say 200000 / 32000), text-only, answers anonymously.
+  { match: /^big.?pickle/, vision: false, reasoning: true, contextWindow: 200000, maxOutput: 32000 },
   { match: /^deepseek/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 64000 },
   { match: /^jev/, vision: false, reasoning: false, contextWindow: 32768, maxOutput: 4096 },
 ]
@@ -47,6 +58,7 @@ const DISPLAY_NAMES = {
   'union-alpha': 'Union Alpha',
   'deepseek-v4-flash-free': 'DeepSeek V4 Flash',
   'jev-1.13-free': 'Jev 1.13',
+  'big-pickle': 'Big Pickle',
 }
 
 /** Ids whose regional availability is known to be egress-dependent. */

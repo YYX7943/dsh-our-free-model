@@ -1,7 +1,7 @@
 {
   "version": "1.3.1",
   "base": "../",
-  "publishedAt": "2026-10-01T02:34:23.689Z",
+  "publishedAt": "2026-10-01T02:56:24.464Z",
   "notes": "",
   "files": [
     {
@@ -71,8 +71,8 @@
     },
     {
       "path": "src/catalog.js",
-      "size": 5312,
-      "sha256": "8b5841c456badd5e263cf86b059d8762a3eccf1a313b750824bfbebf29da405e"
+      "size": 6015,
+      "sha256": "c596f0d3ef4f3610b80a3dada459a92a2dcff1c48534aaf6ae15eba7be2ef420"
     },
     {
       "path": "src/channel.js",
@@ -96,8 +96,8 @@
     },
     {
       "path": "src/http.js",
-      "size": 17443,
-      "sha256": "b374c8e87dfc793912af6ba48bf044630c561ebb420180a382554cde67f7ff8e"
+      "size": 18671,
+      "sha256": "f635a964aa9e931d9f510eb8cbb7e9c3ca77e03674cdcbc6ed49e954356b7795"
     },
     {
       "path": "src/messages.js",

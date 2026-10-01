@@ -384,6 +384,7 @@ token，并非精确 tokenizer 校验。超限就停止恢复，不会无限续�
 | 地区门 | 受限模型报 `REGION_BLOCKED` 并留在自己的分组 |
 | 门禁漂移 | `FreeTierError` / "only be used from within OpenCode" 归 `GATE_DRIFT` 而不是 `INVALID_CREDENTIAL`，且不在可重试集合里——重发同一个身份只会拿到同一个答案；判据不依赖 `status`，流内拒绝（`status` 为 `undefined`）同样命中。实测：`403 code=GATE_DRIFT type=FreeTierError`，地区与配额两支分类不变 |
 | 出站诊断开关 | `OUR_FREE_MODEL_DEBUG=1` 与 `~/.dsh/our-free-model/debug` 两条通路实测：开 → 逐条打印端点、`x-opencode-*` 门禁头、会话/请求 id、UA、声明的工具名与角色；关 → 零输出。轨迹里塞入机密串反查，0 命中 |
+| 上下文窗口 | 两个 Nemotron 原标 128 000，`dsh-compaction-basic` 据此在 `128000 × 0.8 = 102 400` 就触发压缩。大海捞针实测（码字放在第 1 条消息，另有"从未给出码字"的反向对照）：`nemotron-3-ultra-free` 在 **900 032** token 处完整召回、`nemotron-3.5-lightning-free` 在 **300 032** token 处完整召回，反向对照均不产出码字；pi-ai 注册表与 Zen 免费模型表分别记 1 000 000 / 262 144，与实测一致。已改为该两值，压缩阈值随之变成 800 000 / 209 715 |
 | 转发端口 | `/v1/models`、流式与非流式 `/v1/chat/completions`；无 Key 请求被拒 `401` |
 | 界面文案 | 无乱码；上游厂名只出现在仓库文档与公告正文两处——#8 要求的披露得有个用户看得见的位置，公告算说明位。模型选择器、设置页与报错文案里始终不出现 |
 

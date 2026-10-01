@@ -34,6 +34,17 @@ export const CAPABILITIES = [
   { match: /^mimo.*v2\.5/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072, canDisableThinking: false },
   { match: /^mimo/, vision: true, reasoning: true, contextWindow: 262144, maxOutput: 131072 },
   { match: /^muse.?spark/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072 },
+  // Measured on this lane 2026-10-01 with a codeword planted in message 1 of the
+  // transcript: still recalled at 900 032 tokens (and at 700 032), while the
+  // control that never received the codeword produced nothing — so the gateway
+  // really serves ~1M here. The single 128 000 entry made dsh-compaction-basic
+  // fire at 128 000 × 0.8 = 102 400 tokens and discard roughly eight times the
+  // window the model can hold. Corroborated by pi-ai's registry and the Zen
+  // free-model table, both of which say 1 000 000.
+  { match: /^nemotron-3-ultra/, vision: false, reasoning: true, contextWindow: 1000000, maxOutput: 32768 },
+  // Recalled the same way at 300 032 tokens; pi-ai and the free-model table both
+  // say 262 144, so the threshold lands at 209 715 — inside what is proven.
+  { match: /^nemotron-3\.5/, vision: false, reasoning: true, contextWindow: 262144, maxOutput: 32768 },
   { match: /^nemotron/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 32768 },
   { match: /^ling/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 32768 },
   { match: /^space.?bunny/, vision: true, reasoning: true, contextWindow: 262144, maxOutput: 65536 },

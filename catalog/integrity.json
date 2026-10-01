@@ -54,13 +54,13 @@
     },
     {
       "path": "README_EN.md",
-      "size": 55643,
-      "sha256": "614a714349e50318d1bdb614845904cac67039e664474670e4241bd7831dd2a3"
+      "size": 56161,
+      "sha256": "e4f8b53166b8e19bc7d335ee8cf1013e933957ac07f79ed39646ac9d7e748c94"
     },
     {
       "path": "README.md",
-      "size": 52010,
-      "sha256": "2ec6ad29e189f2a579095ea33993fb2c75e96ccd11b3314804f91dc10fb84c21"
+      "size": 52559,
+      "sha256": "276d377a7f31010a3ae4a1bee63fdb3be716ac16c2eafd144d1e06328fced73c"
     },
     {
       "path": "src/adapter.js",
@@ -69,8 +69,8 @@
     },
     {
       "path": "src/catalog.js",
-      "size": 6015,
-      "sha256": "c596f0d3ef4f3610b80a3dada459a92a2dcff1c48534aaf6ae15eba7be2ef420"
+      "size": 6920,
+      "sha256": "23312b84d2fcc9c0dc61c59fc2a20d86f6abcf2e7dbf26204086d8e9bbee6904"
     },
     {
       "path": "src/channel.js",

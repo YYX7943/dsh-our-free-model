@@ -25,6 +25,22 @@ import { baseModelId, isResponsesModel } from './upstream.js'
 const ALWAYS_FREE = new Set(['union-alpha', 'space-bunny-free', 'big-pickle'])
 
 /**
+ * Free-lane ids that are **not** chat models, and must never reach the picker.
+ *
+ * Jev is a "System One" structured-decision model from TypeSafe AI: instead of
+ * generating text it evaluates a `state` against typed questions and returns
+ * values with probabilities. Zen serves it at `/zen/v1/systemone`, not the chat
+ * endpoint — measured 2026-10-01 on this egress: `/systemone` answers 200 with a
+ * real answer in ~1 s, while `/chat/completions` answers `500 Internal server
+ * error` every single time. It was sitting in the picker as a model that could
+ * never complete a turn.
+ *
+ * It is still free and still usable — just through a tool rather than the model
+ * selector. `dsh-jev-decide` exposes it that way.
+ */
+const NON_CHAT_MODELS = new Set(['jev-1.13', 'jev-1.13-free'])
+
+/**
  * Local capability baseline. `contextWindow`/`maxOutput` are the provider's
  * published capacities; `vision` is what this lane actually accepted under a
  * direct image-input probe, not what a model card claims.
@@ -125,6 +141,7 @@ export function buildCatalog(ids) {
     const id = String(raw ?? '').trim()
     if (id === '' || !isFreeLane(id)) continue
     const base = baseModelId(id)
+    if (NON_CHAT_MODELS.has(base)) continue
     if (seen.has(base)) continue
     seen.add(base)
     const caps = capabilitiesFor(base)

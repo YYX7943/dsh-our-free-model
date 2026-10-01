@@ -1,7 +1,7 @@
 {
   "version": "1.3.1",
   "base": "../",
-  "publishedAt": "2026-10-01T04:31:10.562Z",
+  "publishedAt": "2026-10-01T05:14:36.515Z",
   "notes": "",
   "files": [
     {
@@ -56,13 +56,13 @@
     },
     {
       "path": "README_EN.md",
-      "size": 56161,
-      "sha256": "e4f8b53166b8e19bc7d335ee8cf1013e933957ac07f79ed39646ac9d7e748c94"
+      "size": 56872,
+      "sha256": "4bb4b249eea415a9764a662c568009b1876902f6676f44b254135c99bf86969f"
     },
     {
       "path": "README.md",
-      "size": 52559,
-      "sha256": "276d377a7f31010a3ae4a1bee63fdb3be716ac16c2eafd144d1e06328fced73c"
+      "size": 53195,
+      "sha256": "cea9c3d8b568ae97e016a2daf976d8731aff59d05738d8fae9d2f5c3e4d98508"
     },
     {
       "path": "src/adapter.js",
@@ -71,8 +71,8 @@
     },
     {
       "path": "src/catalog.js",
-      "size": 6920,
-      "sha256": "23312b84d2fcc9c0dc61c59fc2a20d86f6abcf2e7dbf26204086d8e9bbee6904"
+      "size": 7764,
+      "sha256": "52ba7d23c750f210ef5a7d8bb60a522b2866a6fab3ae7936b5038abd51c3514e"
     },
     {
       "path": "src/channel.js",

@@ -60,6 +60,24 @@ const stub = await stubUpstream({ listing: LISTING, answer: verdict })
 process.env.OUR_FREE_MODEL_BASE = stub.base
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ofm-picker-'))
 process.env.DSH_HOME = scratch
+
+/**
+ * What the listing becomes once the catalog's own filters have run.
+ *
+ * `jev-1.13-free` stays in `LISTING` because upstream really does name it, but
+ * it never enters the catalog: it is a System One structured-decision model
+ * served at `/zen/v1/systemone`, and `/chat/completions` answers 500 for it
+ * every time (measured 2026-10-01). So it is never probed, never rostered and
+ * never advertised — derive the probe counts from the catalog rather than the
+ * listing, or a full round can never land.
+ *
+ * Imported here, not at the top: `src/upstream.js` freezes `OUR_FREE_MODEL_BASE`
+ * when it first loads, and an import hoisted above `process.env.… = stub.base`
+ * would bind every probe to the real gateway, leaving the stub with zero
+ * requests and the round waiting forever.
+ */
+const { buildCatalog } = await import('../src/catalog.js')
+const CATALOG_IDS = buildCatalog(LISTING).map(entry => entry.id)
 // Named before the plugin boots, and taken from the ephemeral range: a literal
 // here is a bet that no other suite on the machine wants the same port.
 const forwardPort = await freePort()
@@ -90,14 +108,15 @@ const advertised = async route => ids(await adapter.listModels(route))
 // Every probe in the round has to have landed before the verdicts mean anything.
 await until(() => {
   const store = JSON.parse(fs.readFileSync(path.join(scratch, 'our-free-model', 'availability.json'), 'utf8'))
-  return Object.keys(store.results ?? {}).length >= LISTING.length && store.at > 0
+  return Object.keys(store.results ?? {}).length >= CATALOG_IDS.length && store.at > 0
 }, { what: 'a full probe round' }).catch(error => {
   console.log(`FAIL ${error.message}\nlogs: ${ctx.__logs.join(' | ')}\nrequests seen by the stub: ${stub.requests.length}`)
   process.exit(1)
 })
 
 check('a refused model leaves the picker', (await advertised(ROUTE_MAIN)).includes('deepseek-v4-flash-free'), false)
-check('and so does one the listing names but no route answers for', (await advertised(ROUTE_MAIN)).includes('jev-1.13-free'), false)
+check('and a non-chat id the listing names never enters the catalog at all', CATALOG_IDS.includes('jev-1.13-free'), false)
+check('and so it never reaches the picker', (await advertised(ROUTE_MAIN)).includes('jev-1.13-free'), false)
 check('a working model stays', (await advertised(ROUTE_MAIN)).includes('mimo-v2.6-flash-free'), true)
 check('the gateway having trouble is not a verdict about the model',
   (await advertised(ROUTE_MAIN)).includes('ling-3.0-flash-fin-free'), true)
@@ -111,7 +130,7 @@ check('region-gated models move to their own route', await advertised(ROUTE_REGI
 // added. It has to read as "not knowing", which is not the same as "refused" —
 // and reading it as a verdict used to throw on the spot.
 const verdicts = JSON.parse(fs.readFileSync(path.join(scratch, 'our-free-model', 'availability.json'), 'utf8')).results
-check('the probe did leave a verdict for every model it saw', Object.keys(verdicts).length, LISTING.length)
+check('the probe did leave a verdict for every catalog entry it saw', Object.keys(verdicts).length, CATALOG_IDS.length)
 
 // Grow the roster while a refresh round is in flight: `union-alpha` enters the
 // catalog with the listing response, and its probe answer is held by the gate
@@ -147,6 +166,16 @@ await round
 check('once the round lands it carries a verdict',
   (await callRoute(api(), 'GET', '/api/our-free-model/summary')).json.catalog
     .find(row => row.id === 'union-alpha')?.availability, 'available')
+
+// Read the roster while `union-alpha` is still in it — the listing is reverted
+// two lines below and the discovery that follows drops it again. It is the one
+// catalog entry with `reasoning: false`, so it is the one that must not be
+// handed an effort ladder it will never send.
+const liveUnion = (await callRoute(api(), 'GET', '/api/our-free-model/summary')).json.catalog
+  .find(row => row.id === 'union-alpha')
+check('the model added mid-round is still rostered', liveUnion !== undefined, true)
+check('a model with no effort menu carries no ladder to mislead with', liveUnion?.budgets, undefined)
+
 stub.api.setListing(LISTING)
 
 const discovered = ids(await ctx.__captured.discovery())
@@ -155,12 +184,12 @@ check('model discovery offers what the picker advertises, nothing more',
 
 const summary = await callRoute(api(), 'GET', '/api/our-free-model/summary')
 const rowOf = id => summary.json.catalog.find(row => row.id === id)
-check('the roster still lists the hidden model, with its verdict', [rowOf('jev-1.13-free').route, rowOf('jev-1.13-free').availability], [null, 'unavailable'])
-check('the refusal is on record for the user to read', /No such model/.test(rowOf('jev-1.13-free').detail), true)
+check('a non-chat id never reaches the roster at all', rowOf('jev-1.13-free'), undefined)
+check('the roster still lists a refused model, with its verdict', [rowOf('deepseek-v4-flash-free').route, rowOf('deepseek-v4-flash-free').availability], [null, 'unavailable'])
+check('the refusal is on record for the user to read', /Model is unavailable/.test(rowOf('deepseek-v4-flash-free').detail ?? ''), true)
 check('and the picker positions of the working models are named', rowOf('mimo-v2.6-flash-free').route, ROUTE_MAIN)
 check('a reasoning model carries the rung ladder it will really send',
   rowOf('mimo-v2.6-flash-free').budgets.map(row => `${row.id}:${row.tokens}`), ['light:4096', 'balanced:16384', 'deep:32768'])
-check('a model with no effort menu carries no ladder to mislead with', rowOf('jev-1.13-free').budgets, undefined)
 
 // The effort menu the composer shows has to print the same number, or it is the
 // issue-#2 mismatch wearing a different hat.

@@ -26,7 +26,7 @@ import { applyFingerprint, baseModelId, endpointFor, mintRequestId, sessionForCo
 import { toChatMessages, toClaudeMessages, toResponseInput, toToolDefs, repairToolPairing } from './messages.js'
 import { CODE, UpstreamError, postStreamed } from './http.js'
 import { finishReason, readStream, windowTokens } from './stream.js'
-import { DEFAULT_LEVEL, MIN_BUDGET, budgetFor, effortsFor, resolveLevel } from './effort.js'
+import { DEFAULT_LEVEL, MIN_BUDGET, EFFORT_WIRE, budgetFor, effortsFor, resolveLevel } from './effort.js'
 import { createChannel } from './channel.js'
 import { recoveryPolicy, canRecover, recoveryMessages, checkpointFits, addUsage, createBlockTracker } from './recovery.js'
 
@@ -218,6 +218,13 @@ export class FreeModelAdapter {
     const payloadFor = (input, ceiling, recovering, sink) => {
       const payload = buildPayload(wire, entry.id, input, options, ceiling, resolveImage, sink)
       if (declared.length > 0) payload.tools = declared
+      // Fledge 等 effort-aware 模型：把 OFM 的 effort 等级映射成上游真正认识的
+      // reasoning_effort 字段。不带该字段时 fledge 只回"复述用户输入"的伪推理，
+      // 且推理内容走 reasoning_content 字段；带 low/high/max 才做真正的深度推理。
+      if (wire === 'chat' && entry.effortAware === true) {
+        const wireEffort = EFFORT_WIRE[resolveLevel(options.reasoningEffort, entry)?.id]
+        if (wireEffort) payload.reasoning_effort = wireEffort
+      }
       if (typeof options.temperature === 'number' && Number.isFinite(options.temperature)) payload.temperature = options.temperature
       if (wire !== 'responses' && Array.isArray(options.stop) && options.stop.length > 0) payload.stop = options.stop
       if (recovering) payload.tool_choice = wire === 'messages' ? { type: 'none' } : 'none'

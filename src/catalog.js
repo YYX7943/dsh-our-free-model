@@ -70,6 +70,12 @@ export const CAPABILITIES = [
   // Zen free-model pages both say 200000 / 32000), text-only, answers anonymously.
   { match: /^big.?pickle/, vision: false, reasoning: true, contextWindow: 200000, maxOutput: 32000 },
   { match: /^deepseek/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 64000 },
+  // Fledge（2026-10 新模型，Lab 未知）：models.dev 记录 1M / 131072；实测允许
+  // reasoning_effort = ["low","high","max"]（"none" 直接 400），思考不能关。
+  // effortAware 标记让 adapter 把 OFM 的 light/balanced/deep 映射成上游
+  // reasoning_effort 值（effort.js EFFORT_WIRE），从而触发真正的深度推理；
+  // 否则该模型只回"复述用户输入"的伪推理，且 OFM 解析器拿不到标准字段。
+  { match: /^fledge/, vision: false, reasoning: true, contextWindow: 1048576, maxOutput: 131072, canDisableThinking: false, effortAware: true },
   { match: /^jev/, vision: false, reasoning: false, contextWindow: 32768, maxOutput: 4096 },
 ]
 

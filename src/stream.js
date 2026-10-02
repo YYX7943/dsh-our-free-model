@@ -154,6 +154,11 @@ function feedChat(sink, payload, renameMap, onFinish) {
     if (typeof delta.reasoning === 'string') sink.reasoning('r', delta.reasoning)
     else if (Array.isArray(delta.reasoning_details)) {
       for (const part of delta.reasoning_details) if (typeof part?.text === 'string') sink.reasoning('r', part.text)
+    } else if (typeof delta.reasoning_content === 'string' && delta.reasoning_content !== '') {
+      // DeepSeek 风格推理字段（fledge 等模型在网关未启用标准 reasoning 时返回
+      // 的就是它；不带 effort 时甚至只回"复述用户输入"）。不识别它会导致
+      // reasoning 模型看起来"从不思考"。
+      sink.reasoning('r', delta.reasoning_content)
     }
     if (typeof delta.content === 'string') sink.text('t', delta.content)
     for (const call of delta.tool_calls ?? []) {

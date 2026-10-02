@@ -38,6 +38,18 @@ export const LEVELS = [
 
 export const DEFAULT_LEVEL = 'balanced'
 
+/**
+ * Upstream `reasoning_effort` value for effort-aware models (fledge, 2026-10).
+ * Fledge 实测只接受 ["low","high","max"]（"none" 会 400），且它的推理质量
+ * 直接跟随该参数（不带 effort 只回"复述用户输入"的伪推理）。OFM 的三级
+ * 菜单由此映射成上游真正认识的档位。
+ */
+export const EFFORT_WIRE = {
+  light: 'low',
+  balanced: 'high',
+  deep: 'max',
+}
+
 /** Rungs of a model that must think are widened by this factor; see the module note. */
 export const ALWAYS_THINKING_FACTOR = 2
 

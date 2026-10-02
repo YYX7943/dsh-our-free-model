@@ -1,7 +1,7 @@
 {
   "version": "1.3.1",
   "base": "../",
-  "publishedAt": "2026-10-02T07:05:20.664Z",
+  "publishedAt": "2026-10-02T07:11:43.069Z",
   "notes": "",
   "files": [
     {
@@ -16,8 +16,8 @@
     },
     {
       "path": "client.js",
-      "size": 107555,
-      "sha256": "f9cc60f53af6b9f4cd286420803366e968f61a692b142a792881c51f6fd55f55"
+      "size": 109213,
+      "sha256": "770ea6033dc4088e3945c8be196e94f830b1cceaf7ce14a79f40a2b47a40fc49"
     },
     {
       "path": "cordis.patch.yml",
@@ -31,8 +31,8 @@
     },
     {
       "path": "index.js",
-      "size": 60254,
-      "sha256": "fdfe3c2b63aca6f93922d91419c981939b8fb8138f296c4adb5ada9baac2d8bc"
+      "size": 62515,
+      "sha256": "2580cb82d322c7061dcd4e7c5ebb29d9b0a67cbf5ff8d88f599f779c1842ceb8"
     },
     {
       "path": "LICENSE",
@@ -56,18 +56,18 @@
     },
     {
       "path": "README_EN.md",
-      "size": 59112,
-      "sha256": "67aeaf668dd2f4965627db8b5967c3ef5f002cd6074ab95596e9a7d0cd34454b"
+      "size": 59853,
+      "sha256": "8d609ebcc46ff1488082962cf140693608f56ecbad9f53e184295473f780df80"
     },
     {
       "path": "README.md",
-      "size": 55289,
-      "sha256": "9d933f51dfae49ab135feaac77e4b9ee209ba4d95afa2762dde2418c52f98cb1"
+      "size": 55911,
+      "sha256": "95f37db37eb18183732630100c2bca46a4f8a91e15e1b6d78dbbf5b1c4737fe1"
     },
     {
       "path": "src/adapter.js",
-      "size": 22911,
-      "sha256": "61342668b4410940ae6ae254cfa3576276f8575ae5b2412f290504052cd3232c"
+      "size": 24025,
+      "sha256": "263417927c97f358d8f7560c0e3a9b9368e924e139ad88cc2ec8d597291aaacc"
     },
     {
       "path": "src/catalog.js",
@@ -96,13 +96,13 @@
     },
     {
       "path": "src/forward.js",
-      "size": 12500,
-      "sha256": "d7020a35d6545689dd2d2ddfe8cf918635f2867626ea2d794adb0b7654c68124"
+      "size": 13108,
+      "sha256": "bc59476c127144489aefe35a781b43b75010dc10f1fbcf15cdf3b2e260664437"
     },
     {
       "path": "src/http.js",
-      "size": 19743,
-      "sha256": "98ba77d4e6457ac68ecdc917ebd1cef3654899af171032321f04c176c6826250"
+      "size": 21232,
+      "sha256": "7e0dcde1368502a16e1a5cbdc1d3da5d8f57da14f355711d97ce7b05edcbab1e"
     },
     {
       "path": "src/messages.js",
@@ -131,8 +131,8 @@
     },
     {
       "path": "src/store.js",
-      "size": 13341,
-      "sha256": "74df97aea856559bc6e24f77d4e3dfe351a9a5d802f7ccc94dcf35d4a3ac567d"
+      "size": 16245,
+      "sha256": "75bd448c0ae8692dbfb14884c42f5d80fd977ec197781a4e700c231c0f25d1ce"
     },
     {
       "path": "src/stream.js",

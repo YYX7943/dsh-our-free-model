@@ -4,7 +4,11 @@
     "name": "dsh-our-free-model",
     "version": "1.3.1",
     "sourceRepository": "https://github.com/zouyuxuan122/dsh-our-free-model",
+<<<<<<< HEAD
     "sourceRevision": "938006860a556af1b686af5b1a33cd93768a9d04"
+=======
+    "sourceRevision": "7776260def6c73228f70c97a9725da95eb6e7347"
+>>>>>>> origin/main
   },
   "license": {
     "spdx": "MIT",

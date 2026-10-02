@@ -30,7 +30,15 @@ const server = http.createServer((req, res) => {
     const ordinal = scenario.requests.length
     scenario.requests.push({ body, path: req.url, headers: req.headers })
     scenario.responses.add(res)
-    res.on('close', () => { scenario.responses.delete(res); scenario.closed++ })
+    let released = false
+    const release = () => {
+      if (released) return
+      released = true
+      scenario.responses.delete(res)
+      scenario.closed++
+    }
+    res.on('finish', release)
+    res.on('close', release)
     const answer = scenario.answers[ordinal] ?? { status: 500, body: '{"error":{"message":"unexpected extra request"}}' }
     if (answer.socket) { req.destroy(); res.destroy(); return }
     res.writeHead(answer.status ?? 200, { 'content-type': answer.status ? 'application/json' : 'text/event-stream' })
@@ -118,21 +126,23 @@ function terminal(wire, { reason = 'stop', input = 11, output = 7, usage = true 
   })
 }
 
-function setup(model, answers, { settings = {}, options = {}, entryOverrides = {}, onWarn } = {}) {
+function setup(model, answers, { settings = {}, options = {}, entryOverrides = {}, onWarn, hideModel = false } = {}) {
   assert.ok(CATALOG.some(entry => entry.id === model), `目录缺少 ${model}`)
   const scenario = { answers, requests: [], responses: new Set(), timers: [], closed: 0 }
   activeCase = scenario
   const records = []
+  const turns = []
   const controller = new AbortController()
   const adapter = new FreeModelAdapter({
-    state: () => ({ catalog: CATALOG.map(entry => entry.id === model ? { ...entry, ...entryOverrides } : entry), membership: { [ROUTE_MAIN]: MODELS }, settings: { enabled: true, defaultMaxTokens: 32768, ...settings }, attributionUserAgent: 'offline-recovery-test' }),
+    state: () => ({ catalog: hideModel ? [] : CATALOG.map(entry => entry.id === model ? { ...entry, ...entryOverrides } : entry), membership: { [ROUTE_MAIN]: MODELS }, settings: { enabled: true, defaultMaxTokens: 32768, ...settings }, attributionUserAgent: 'offline-recovery-test' }),
     recordUsage: row => records.push(row),
+    recordTurn: row => turns.push(row),
     warn: message => onWarn?.(message, controller),
   })
   const stream = adapter.stream({ provider: ROUTE_MAIN, model, reasoningEffort: 'deep', maxTokens: 4096,
     sessionId: `recovery:${model}`, messages: [{ role: 'user', content: [{ type: 'text', text: TASK }] }],
     tools: [TOOL], signal: controller.signal, ...options })
-  return { scenario, records, controller, adapter, stream }
+  return { scenario, records, turns, controller, adapter, stream }
 }
 
 function cleanup(run) {
@@ -184,6 +194,10 @@ function checkFinal(run, kind, requests) {
   if (kind === 'stop' || requests === 2) assert.equal(usageCount, 1, '正常或恢复路径只能有一个最终 usage')
   else assert.ok(usageCount <= 1, '首段失败或取消最多有一个 usage')
   assert.equal(run.finish?.kind, kind)
+  assert.equal(run.turns.length, 1, '一次适配器调用只能记一条逻辑回合')
+  assert.equal(run.turns[0].ok, kind === 'stop', '逻辑回合结果必须跟最终结果一致')
+  assert.equal(run.turns[0].attempts, requests, '逻辑回合保留实际物理请求数')
+  assert.equal(run.turns[0].recovered, kind === 'stop' && requests === 2, '只有成功续写才标为 recovered')
   checkBlocks(run.chunks)
 }
 
@@ -207,8 +221,10 @@ function emptyToolMetadata(wire) {
 
 let failures = 0
 let checks = 0
+const suiteStarted = Date.now()
 const check = async (name, fn) => {
   checks++
+  console.log(`run  ${name} (${Date.now() - suiteStarted} ms)`)
   try { await fn(); console.log(`ok   ${name}`) }
   catch (error) { failures++; console.log(`FAIL ${name} - ${error.message}`) }
 }
@@ -235,6 +251,7 @@ try {
       assert.notDeepEqual(continuation.body, first.body, '不能原样重发整轮')
       assert.equal(continuation.body.tool_choice?.type ?? continuation.body.tool_choice, 'none', '续写禁止工具选择')
       assert.equal(run.records.length, 2, '每次真实 HTTP 调用独立记账')
+      assert.deepEqual(run.turns, [{ at: run.turns[0].at, model, ok: true, recovered: true, attempts: 2, origin: 'harness' }])
       assert.deepEqual(run.records.map(row => row.attempt), [0, 1])
       assert.equal(typeof run.records[0].recoveryId, 'string')
       assert.ok(run.records[0].recoveryId.length > 0)
@@ -513,8 +530,7 @@ try {
         const out = { ...run, chunks, finish: chunks.find(chunk => chunk.type === 'finish')?.reason }
         checkFinal(out, 'aborted', phase === '首段' ? 1 : 2)
         assert.equal(out.finish.failure.code, 'ABORTED')
-        await new Promise(resolve => setTimeout(resolve, 40))
-        assert.equal(run.scenario.responses.size, 0, '取消必须关闭 HTTP 连接')
+        await until(() => run.scenario.responses.size === 0, { what: '取消关闭 HTTP 连接', timeoutMs: 600 })
       } finally { cleanup(run) }
     })
   }
@@ -528,11 +544,34 @@ try {
       const pending = run.stream.next()
       const returning = run.stream.return()
       await Promise.race([Promise.all([pending, returning]), new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('return 未取消正在等待的 HTTP')), 600) })])
-      await new Promise(resolve => setTimeout(resolve, 40))
       assert.equal(run.scenario.requests.length, 1)
-      assert.equal(run.scenario.responses.size, 0, 'return 必须关闭 HTTP 连接')
+      await until(() => run.scenario.responses.size === 0, { what: 'return 关闭 HTTP 连接', timeoutMs: 600 })
+      assert.equal(run.turns.length, 1)
+      assert.deepEqual({ ok: run.turns[0].ok, recovered: run.turns[0].recovered, attempts: run.turns[0].attempts }, { ok: false, recovered: false, attempts: 1 })
     } finally { clearTimeout(timer); cleanup(run) }
   })
+
+  await check('首个上游请求前取消也记录失败回合', async () => {
+    const run = setup(model, [])
+    run.controller.abort(new Error('cancelled before request'))
+    const chunks = []
+    try {
+      for await (const chunk of run.stream) chunks.push(chunk)
+      checkFinal({ ...run, chunks, finish: chunks.find(chunk => chunk.type === 'finish')?.reason }, 'aborted', 0)
+    } finally { cleanup(run) }
+  })
+
+  for (const [label, config, code] of [
+    ['插件关闭', { settings: { enabled: false } }, 'CONFIG_DISABLED'],
+    ['模型未被目录提供', { hideModel: true }, 'SERVER'],
+  ]) {
+    await check(`${label}也记录零物理请求的失败回合`, async () => {
+      const run = await drive(model, [], config)
+      checkFinal(run, 'error', 0)
+      assert.equal(run.finish.failure.code, code)
+      assert.deepEqual(run.turns[0], { at: run.turns[0].at, model, ok: false, recovered: false, attempts: 0, origin: 'harness' })
+    })
+  }
 
   const { apply, inject } = await import('../index.js')
   async function withForward(answers, fn) {

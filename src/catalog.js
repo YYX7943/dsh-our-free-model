@@ -64,6 +64,7 @@ export const CAPABILITIES = [
   { match: /^nemotron/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 32768 },
   { match: /^ling/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 32768 },
   { match: /^space.?bunny/, vision: true, reasoning: true, contextWindow: 262144, maxOutput: 65536 },
+  { match: /^longcat/, vision: true, reasoning: true, contextWindow: 262144, maxOutput: 65536 },
   { match: /^union/, vision: true, reasoning: false, contextWindow: 262144, maxOutput: 131072 },
   // Stealth id, no suffix: 200 K / 32 K is the published figure (pi.dev and the
   // Zen free-model pages both say 200000 / 32000), text-only, answers anonymously.

@@ -32,7 +32,7 @@
 /** Ordered for display: the array order is the picker's order. */
 export const LEVELS = [
   { id: 'light', name: 'Light', zh: '精简', ceiling: 2048, hint: 'terse deliberation, the fastest answer here.' },
-  { id: 'balanced', name: 'Balanced', zh: '均衡', ceiling: 8192, hint: 'enough to reason through a normal turn.' },
+  { id: 'balanced', name: 'Balanced', zh: '均衡', ceiling: 16384, hint: 'enough to reason through a normal turn.' },
   { id: 'deep', name: 'Deep', zh: '深思', ceiling: undefined, hint: 'the model\'s full output capacity, extended deliberation.' },
 ]
 

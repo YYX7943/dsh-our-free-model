@@ -3,10 +3,11 @@
  * long answer still finish, or is it cut by the ceiling the effort rung sends?
  *
  * Issue #2 was a truncation report, so the fix has to be measured with a real
- * long turn on the model it named. `balanced` sends 16 384 tokens on MiMo V2.6
- * Flash after the ladder was doubled; before, the same rung sent 8 192. The
- * prompt below produced 10 164 output tokens, so the old ceiling cut this exact
- * request with finish `length` and the new one let it end with `stop`.
+ * long turn on the model it named. `balanced` sends 32 768 tokens on MiMo V2.6
+ * Flash (the 16 384 rung doubled for thinking-always-on); earlier revisions sent
+ * 16 384 or 8 192 on the same rung. The prompt below produced 10 164 output
+ * tokens, so the old ceiling cut this exact request with finish `length` and
+ * the wider one lets it end with `stop`.
  *
  * Run from the repository root: node scripts/probes/long-answer.mjs [light|balanced|deep]
  * It spends real quota on the free lane and takes minutes.

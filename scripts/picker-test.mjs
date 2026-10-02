@@ -189,19 +189,19 @@ check('the roster still lists a refused model, with its verdict', [rowOf('deepse
 check('the refusal is on record for the user to read', /Model is unavailable/.test(rowOf('deepseek-v4-flash-free').detail ?? ''), true)
 check('and the picker positions of the working models are named', rowOf('mimo-v2.6-flash-free').route, ROUTE_MAIN)
 check('a reasoning model carries the rung ladder it will really send',
-  rowOf('mimo-v2.6-flash-free').budgets.map(row => `${row.id}:${row.tokens}`), ['light:4096', 'balanced:16384', 'deep:32768'])
+  rowOf('mimo-v2.6-flash-free').budgets.map(row => `${row.id}:${row.tokens}`), ['light:4096', 'balanced:32768', 'deep:32768'])
 
 // The effort menu the composer shows has to print the same number, or it is the
 // issue-#2 mismatch wearing a different hat.
 const menu = async id => (await adapter.resolveModel(ROUTE_MAIN, id))?.reasoning?.efforts ?? []
 const mimoMenu = await menu('mimo-v2.6-flash-free')
 check('the thinking-always-on menu states the doubled ceiling it will send',
-  mimoMenu.map(row => row.description.match(/^(\d+) K/)?.[1]), ['4', '16', '32'])
+  mimoMenu.map(row => row.description.match(/^(\d+) K/)?.[1]), ['4', '32', '32'])
 check('and says out loud that thinking cannot be switched off here',
   mimoMenu.every(row => /cannot be switched off/.test(row.description)), true)
 const museMenu = await menu('muse-spark-1.3-contributor-free')
 check('a model that can think nothing at all keeps the published rungs',
-  museMenu.map(row => row.description.match(/^(\d+) K/)?.[1]), ['2', '8', '32'])
+  museMenu.map(row => row.description.match(/^(\d+) K/)?.[1]), ['2', '16', '32'])
 check('without the always-thinking clause', museMenu.every(row => !/cannot be switched off/.test(row.description)), true)
 
 // Hiding a model is about *selection*, not about breaking a session that already

@@ -44,8 +44,8 @@ check('effortAware survives buildCatalog (fledge)', catalog('fledge-alpha-free')
 check('a non-effort-aware model carries no flag', UNION.effortAware, false)
 
 // ── the ladder as the settings page and the picker see it ────────────────────
-check('mimo rungs double the shared ceiling', budgetLadder(MIMO, undefined, DEFAULTS).map(row => row.tokens), [4096, 16384, 32768])
-check('muse spark keeps the published rungs', budgetLadder(MUSE, undefined, DEFAULTS).map(row => row.tokens), [2048, 8192, 32768])
+check('mimo rungs double the shared ceiling', budgetLadder(MIMO, undefined, DEFAULTS).map(row => row.tokens), [4096, 32768, 32768])
+check('muse spark keeps the published rungs', budgetLadder(MUSE, undefined, DEFAULTS).map(row => row.tokens), [2048, 16384, 32768])
 check('a model with no effort menu spends its whole window on the answer',
   budgetLadder(UNION, undefined, DEFAULTS).map(row => row.tokens), [32768, 32768, 32768])
 check('the default rung is marked, so the page cannot pick a different one',
@@ -53,7 +53,7 @@ check('the default rung is marked, so the page cannot pick a different one',
 
 const ladder = budgetLadder(MIMO, undefined, DEFAULTS).map(row => row.tokens)
 check('the ladder climbs', ladder.every((value, index) => index === 0 || value >= ladder[index - 1]), true)
-check('balanced really moved', ladder[1] > 8192, true)
+check('balanced really moved', ladder[1] > 16384, true)
 
 // ── the terms that cap it ────────────────────────────────────────────────────
 check('the session ceiling wins over the rung', budgetFor('deep', MIMO, 4000, DEFAULTS), 4000)
@@ -64,12 +64,12 @@ check('and never falls below what an answer needs', budgetFor('deep', { maxOutpu
 // The two ways a ceiling stops being a number. The settings page's own cleared
 // input field posts `Number('') || 0`, and a 0 ceiling is not "no ceiling":
 // `min(capacity, 0)` came out as the 512-token floor on every model, while the
-// picker went on advertising the 4 K / 16 K / 32 K ladder above it.
-check('a zero default ceiling reads as unset, not as the floor', budgetFor('balanced', MIMO, undefined, 0), 16384)
-check('so does a negative one', budgetFor('balanced', MIMO, undefined, -1), 16384)
-check('and one typed rather than chosen', budgetFor('balanced', MIMO, undefined, 'abc'), 16384)
+// picker went on advertising the 4 K / 32 K / 32 K ladder above it.
+check('a zero default ceiling reads as unset, not as the floor', budgetFor('balanced', MIMO, undefined, 0), 32768)
+check('so does a negative one', budgetFor('balanced', MIMO, undefined, -1), 32768)
+check('and one typed rather than chosen', budgetFor('balanced', MIMO, undefined, 'abc'), 32768)
 check('while a ceiling that is a number still binds', budgetFor('balanced', MIMO, undefined, 6000), 6000)
-check('the same holds for the session’s own maxTokens', budgetFor('balanced', MIMO, 0, DEFAULTS), 16384)
+check('the same holds for the session’s own maxTokens', budgetFor('balanced', MIMO, 0, DEFAULTS), 32768)
 check('an unknown rung resolves to the menu default rather than to no ceiling',
   budgetFor('turbo', MIMO, undefined, DEFAULTS), budgetFor('balanced', MIMO, undefined, DEFAULTS))
 
@@ -94,14 +94,14 @@ async function sentBudget(options) {
   return stub.requests[before].body
 }
 
-check('balanced sends the doubled rung ceiling', (await sentBudget({ reasoningEffort: 'balanced' })).max_tokens, 16384)
+check('balanced sends the doubled rung ceiling', (await sentBudget({ reasoningEffort: 'balanced' })).max_tokens, 32768)
 check('an effort-aware model maps balanced to the upstream high', (await sentBudget({ reasoningEffort: 'balanced' })).reasoning_effort, 'high')
 check('light maps to low on the wire', (await sentBudget({ reasoningEffort: 'light' })).reasoning_effort, 'low')
 check('deep maps to max on the wire', (await sentBudget({ reasoningEffort: 'deep' })).reasoning_effort, 'max')
 check('light sends its doubled rung', (await sentBudget({ reasoningEffort: 'light' })).max_tokens, 4096)
 check('deep sends the whole window', (await sentBudget({ reasoningEffort: 'deep' })).max_tokens, 32768)
 check('a caller that names no rung gets the default one, not an unbounded call',
-  (await sentBudget({})).max_tokens, 16384)
+  (await sentBudget({})).max_tokens, 32768)
 check('the recorded effort is the rung that ran', records.at(-1).effort, 'balanced')
 
 await sentBudget({ reasoningEffort: 'light' })

@@ -46,9 +46,17 @@ const NON_CHAT_MODELS = new Set(['jev-1.13', 'jev-1.13-free'])
  * direct image-input probe, not what a model card claims.
  */
 export const CAPABILITIES = [
-  { match: /^mimo.*v2\.6/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072, canDisableThinking: false },
-  { match: /^mimo.*v2\.5/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072, canDisableThinking: false },
-  { match: /^mimo/, vision: true, reasoning: true, contextWindow: 262144, maxOutput: 131072 },
+  // MiMo V2.6：models.dev 与 pi-ai 注册表均记 200K / 32K（旧值 1M/131K 无实测
+  // 支撑，会误导压缩阈值到 800K+，实际 200K 就应触发）。2026-10-02 实测：视觉可用
+  // （图片正确读出 FLEDGE 42）；reasoning_effort 全档位接受，"none" 能真正关思考
+  // （reasoning 归零），但 OFM 不提供 Off 档，故 canDisableThinking 仍为 false 以
+  // 保留"思考与正文共享上限"的翻倍预算；effortAware 让 Light/Balanced/Deep 映射成
+  // low/high/max 真实生效。
+  { match: /^mimo.*v2\.6/, vision: true, reasoning: true, contextWindow: 200000, maxOutput: 32000, canDisableThinking: false, effortAware: true },
+  // MiMo V2.5：同上，models.dev / pi-ai 均记 200K / 32K；视觉实测可用；effort 实测
+  // "none" 关思考、low/max 改变推理量。
+  { match: /^mimo.*v2\.5/, vision: true, reasoning: true, contextWindow: 200000, maxOutput: 32000, canDisableThinking: false, effortAware: true },
+  { match: /^mimo/, vision: true, reasoning: true, contextWindow: 200000, maxOutput: 32000 },
   { match: /^muse.?spark/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072 },
   // Measured on this lane 2026-10-01 with a codeword planted in message 1 of the
   // transcript: still recalled at 900 032 tokens (and at 700 032), while the
@@ -57,31 +65,43 @@ export const CAPABILITIES = [
   // fire at 128 000 × 0.8 = 102 400 tokens and discard roughly eight times the
   // window the model can hold. Corroborated by pi-ai's registry and the Zen
   // free-model table, both of which say 1 000 000.
-  { match: /^nemotron-3-ultra/, vision: false, reasoning: true, contextWindow: 1000000, maxOutput: 128000 },
+  // 2026-10-02 实测：effort "none" 可真正关思考（reasoning 归零），low/max 改变推理
+  // 量，故 effortAware；OFM 无 Off 档，thinking 实际恒开，canDisableThinking 置 false
+  // 以翻倍共享上限。
+  { match: /^nemotron-3-ultra/, vision: false, reasoning: true, contextWindow: 1000000, maxOutput: 128000, canDisableThinking: false, effortAware: true },
   // Recalled the same way at 300 032 tokens; pi-ai and the free-model table both
   // say 262 144, so the threshold lands at 209 715 — inside what is proven.
-  { match: /^nemotron-3\.5/, vision: false, reasoning: true, contextWindow: 262144, maxOutput: 262144 },
+  // effort 实测同 3-ultra："none" 关思考、low/max 改变推理量。
+  { match: /^nemotron-3\.5/, vision: false, reasoning: true, contextWindow: 262144, maxOutput: 262144, canDisableThinking: false, effortAware: true },
   { match: /^nemotron/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 32768 },
   { match: /^ling/, vision: false, reasoning: true, contextWindow: 262144, maxOutput: 32768 },
   // Space Bunny（2026-09-23 发布，官方博客确认 1M 上下文）：models.dev 记录
   // 1M / 524288，支持 effort low/medium/high/xhigh/max。旧值 262144/65536 偏小，
   // 会提前 4 倍触发压缩。effortAware 让 OFM 的 light/balanced/deep 映射成
-  // low/high/max 发出（都在其允许范围内）。
-  { match: /^space.?bunny/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 524288, effortAware: true },
+  // low/high/max 发出（都在其允许范围内）。2026-10-02 实测：reasoning_effort "none"
+  // 直接 400、thinking.type=disabled 也 400，思考无法关闭，canDisableThinking 置 false。
+  { match: /^space.?bunny/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 524288, canDisableThinking: false, effortAware: true },
   // LongCat 2.5 Preview（官方 LongCat 2.x 系列 1M 上下文）：models.dev 记录
-  // 1M / 131072。旧值 262144/65536 偏小约 4 倍。
+  // 1M / 131072。旧值 262144/65536 偏小约 4 倍。2026-10-02 实测视觉可用；
+  // reasoning_effort 全档位接受但 "none" 不能关思考（thinking.type=disabled 可以），
+  // OFM 不发送 thinking 字段，故保持默认 canDisableThinking。
   { match: /^longcat/, vision: true, reasoning: true, contextWindow: 1000000, maxOutput: 131072 },
   { match: /^union/, vision: true, reasoning: false, contextWindow: 262144, maxOutput: 131072 },
   // Stealth id, no suffix: 200 K / 32 K is the published figure (pi.dev and the
   // Zen free-model pages both say 200000 / 32000), text-only, answers anonymously.
-  { match: /^big.?pickle/, vision: false, reasoning: true, contextWindow: 200000, maxOutput: 32000 },
-  { match: /^deepseek/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 64000 },
-  // Fledge（2026-10 新模型，Lab 未知）：models.dev 记录 1M / 131072；实测允许
-  // reasoning_effort = ["low","high","max"]（"none" 直接 400），思考不能关。
-  // effortAware 标记让 adapter 把 OFM 的 light/balanced/deep 映射成上游
+  // 2026-10-02 实测：reasoning_effort "none" 400，思考无法关闭。
+  { match: /^big.?pickle/, vision: false, reasoning: true, contextWindow: 200000, maxOutput: 32000, canDisableThinking: false },
+  // DeepSeek V4 Flash：models.dev 与 pi-ai 均记 200K / 128K（旧值 128K/64K 偏小）。
+  // 该模型当前在免费通道已停服（Model is unavailable），由可用性探测从选择器移除；
+  // 若回归，参数即按真实规格生效。
+  { match: /^deepseek/, vision: false, reasoning: true, contextWindow: 200000, maxOutput: 128000 },
+  // Fledge（2026-10 新模型，Lab 未知）：models.dev 记录 1M / 131072 且 input 含 image；
+  // 2026-10-02 实测视觉可用（正确读出图片文字/颜色/形状）。实测只接受
+  // reasoning_effort = ["low","high","max"]（"none"/"minimal"/"medium"/"xhigh" 均 400），
+  // 思考不能关。effortAware 标记让 adapter 把 OFM 的 light/balanced/deep 映射成上游
   // reasoning_effort 值（effort.js EFFORT_WIRE），从而触发真正的深度推理；
   // 否则该模型只回"复述用户输入"的伪推理，且 OFM 解析器拿不到标准字段。
-  { match: /^fledge/, vision: false, reasoning: true, contextWindow: 1048576, maxOutput: 131072, canDisableThinking: false, effortAware: true },
+  { match: /^fledge/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072, canDisableThinking: false, effortAware: true },
   { match: /^jev/, vision: false, reasoning: false, contextWindow: 32768, maxOutput: 4096 },
 ]
 
@@ -167,6 +187,7 @@ export function buildCatalog(ids) {
       contextWindow: number(caps.contextWindow) ?? 131072,
       maxOutput: number(caps.maxOutput) ?? 32768,
       canDisableThinking: caps.canDisableThinking !== false,
+      effortAware: caps.effortAware === true,
       regionSensitive: isRegionSensitive(base),
     })
   }

@@ -189,14 +189,14 @@ check('the roster still lists a refused model, with its verdict', [rowOf('deepse
 check('the refusal is on record for the user to read', /Model is unavailable/.test(rowOf('deepseek-v4-flash-free').detail ?? ''), true)
 check('and the picker positions of the working models are named', rowOf('mimo-v2.6-flash-free').route, ROUTE_MAIN)
 check('a reasoning model carries the rung ladder it will really send',
-  rowOf('mimo-v2.6-flash-free').budgets.map(row => `${row.id}:${row.tokens}`), ['light:4096', 'balanced:16384', 'deep:32768'])
+  rowOf('mimo-v2.6-flash-free').budgets.map(row => `${row.id}:${row.tokens}`), ['light:4096', 'balanced:16384', 'deep:32000'])
 
 // The effort menu the composer shows has to print the same number, or it is the
 // issue-#2 mismatch wearing a different hat.
 const menu = async id => (await adapter.resolveModel(ROUTE_MAIN, id))?.reasoning?.efforts ?? []
 const mimoMenu = await menu('mimo-v2.6-flash-free')
 check('the thinking-always-on menu states the doubled ceiling it will send',
-  mimoMenu.map(row => row.description.match(/^(\d+) K/)?.[1]), ['4', '16', '32'])
+  mimoMenu.map(row => row.description.match(/^(\d+) K/)?.[1]), ['4', '16', '31'])
 check('and says out loud that thinking cannot be switched off here',
   mimoMenu.every(row => /cannot be switched off/.test(row.description)), true)
 const museMenu = await menu('muse-spark-1.3-contributor-free')
@@ -209,7 +209,7 @@ check('without the always-thinking clause', museMenu.every(row => !/cannot be sw
 // and fails (or succeeds) on the upstream's own answer rather than on the plugin
 // pretending the id is unknown.
 const hidden = await adapter.resolveModel(ROUTE_MAIN, 'deepseek-v4-flash-free')
-check('a hidden model still resolves its real capacities for the session using it', [hidden?.id, hidden?.context?.contextWindow], ['deepseek-v4-flash-free', 128000])
+check('a hidden model still resolves its real capacities for the session using it', [hidden?.id, hidden?.context?.contextWindow], ['deepseek-v4-flash-free', 200000])
 check('and its effort menu is intact', hidden?.reasoning?.efforts?.map(row => row.id), ['light', 'balanced', 'deep'])
 const hiddenTurn = []
 for await (const chunk of adapter.stream({

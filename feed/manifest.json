@@ -1,7 +1,7 @@
 {
   "version": "1.3.1",
   "base": "../",
-  "publishedAt": "2026-10-02T02:22:30.569Z",
+  "publishedAt": "2026-10-02T03:16:06.793Z",
   "notes": "",
   "files": [
     {
@@ -66,13 +66,13 @@
     },
     {
       "path": "src/adapter.js",
-      "size": 22376,
-      "sha256": "60799508d4629818b9d3f87c38d53756053f325aa544fdac9f10bb8b5db43f77"
+      "size": 22911,
+      "sha256": "61342668b4410940ae6ae254cfa3576276f8575ae5b2412f290504052cd3232c"
     },
     {
       "path": "src/catalog.js",
-      "size": 7861,
-      "sha256": "87ef8af55bd331da454406b703d94ad65cc7aa4624ffde0c10031dbf930ca94b"
+      "size": 8468,
+      "sha256": "9ddbf3dd10e362c5f5f44a6c7186a728fcd14f5a36ab23d2172745349f92934d"
     },
     {
       "path": "src/channel.js",
@@ -86,8 +86,8 @@
     },
     {
       "path": "src/effort.js",
-      "size": 7484,
-      "sha256": "e8a80dfcc4602e78b6d85d7b7e55e1c44e90ed775d0cb175daab654831ecf70a"
+      "size": 7900,
+      "sha256": "f07c7acffafffaa8a83246809bd82fb0c19c52141669cd02df9091c5be1fe020"
     },
     {
       "path": "src/feed.js",
@@ -136,8 +136,8 @@
     },
     {
       "path": "src/stream.js",
-      "size": 19247,
-      "sha256": "99f699d0ee03db58ac12020bc65e4a7fddb824c1c30a019c9beb2aa25fb8ff1b"
+      "size": 19647,
+      "sha256": "cef765c66cb485d38a131de7bd150b5790a2f810a2494fba912a489173cb5e4e"
     },
     {
       "path": "src/trust.js",

@@ -1,7 +1,7 @@
 {
   "version": "1.3.1",
   "base": "../",
-  "publishedAt": "2026-10-02T04:24:38.603Z",
+  "publishedAt": "2026-10-02T05:11:38.121Z",
   "notes": "",
   "files": [
     {
@@ -56,13 +56,13 @@
     },
     {
       "path": "README_EN.md",
-      "size": 56872,
-      "sha256": "4bb4b249eea415a9764a662c568009b1876902f6676f44b254135c99bf86969f"
+      "size": 59112,
+      "sha256": "67aeaf668dd2f4965627db8b5967c3ef5f002cd6074ab95596e9a7d0cd34454b"
     },
     {
       "path": "README.md",
-      "size": 53195,
-      "sha256": "cea9c3d8b568ae97e016a2daf976d8731aff59d05738d8fae9d2f5c3e4d98508"
+      "size": 55289,
+      "sha256": "9d933f51dfae49ab135feaac77e4b9ee209ba4d95afa2762dde2418c52f98cb1"
     },
     {
       "path": "src/adapter.js",

@@ -44,7 +44,7 @@ check('effortAware survives buildCatalog (fledge)', catalog('fledge-alpha-free')
 check('a non-effort-aware model carries no flag', UNION.effortAware, false)
 
 // ── the ladder as the settings page and the picker see it ────────────────────
-check('mimo rungs double the shared ceiling', budgetLadder(MIMO, undefined, DEFAULTS).map(row => row.tokens), [4096, 16384, 32000])
+check('mimo rungs double the shared ceiling', budgetLadder(MIMO, undefined, DEFAULTS).map(row => row.tokens), [4096, 16384, 32768])
 check('muse spark keeps the published rungs', budgetLadder(MUSE, undefined, DEFAULTS).map(row => row.tokens), [2048, 8192, 32768])
 check('a model with no effort menu spends its whole window on the answer',
   budgetLadder(UNION, undefined, DEFAULTS).map(row => row.tokens), [32768, 32768, 32768])
@@ -99,7 +99,7 @@ check('an effort-aware model maps balanced to the upstream high', (await sentBud
 check('light maps to low on the wire', (await sentBudget({ reasoningEffort: 'light' })).reasoning_effort, 'low')
 check('deep maps to max on the wire', (await sentBudget({ reasoningEffort: 'deep' })).reasoning_effort, 'max')
 check('light sends its doubled rung', (await sentBudget({ reasoningEffort: 'light' })).max_tokens, 4096)
-check('deep sends the whole window', (await sentBudget({ reasoningEffort: 'deep' })).max_tokens, 32000)
+check('deep sends the whole window', (await sentBudget({ reasoningEffort: 'deep' })).max_tokens, 32768)
 check('a caller that names no rung gets the default one, not an unbounded call',
   (await sentBudget({})).max_tokens, 16384)
 check('the recorded effort is the rung that ran', records.at(-1).effort, 'balanced')

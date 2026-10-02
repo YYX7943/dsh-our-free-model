@@ -46,17 +46,18 @@ const NON_CHAT_MODELS = new Set(['jev-1.13', 'jev-1.13-free'])
  * direct image-input probe, not what a model card claims.
  */
 export const CAPABILITIES = [
-  // MiMo V2.6：models.dev 与 pi-ai 注册表均记 200K / 32K（旧值 1M/131K 无实测
-  // 支撑，会误导压缩阈值到 800K+，实际 200K 就应触发）。2026-10-02 实测：视觉可用
-  // （图片正确读出 FLEDGE 42）；reasoning_effort 全档位接受，"none" 能真正关思考
-  // （reasoning 归零），但 OFM 不提供 Off 档，故 canDisableThinking 仍为 false 以
-  // 保留"思考与正文共享上限"的翻倍预算；effortAware 让 Light/Balanced/Deep 映射成
-  // low/high/max 真实生效。
-  { match: /^mimo.*v2\.6/, vision: true, reasoning: true, contextWindow: 200000, maxOutput: 32000, canDisableThinking: false, effortAware: true },
-  // MiMo V2.5：同上，models.dev / pi-ai 均记 200K / 32K；视觉实测可用；effort 实测
-  // "none" 关思考、low/max 改变推理量。
-  { match: /^mimo.*v2\.5/, vision: true, reasoning: true, contextWindow: 200000, maxOutput: 32000, canDisableThinking: false, effortAware: true },
-  { match: /^mimo/, vision: true, reasoning: true, contextWindow: 200000, maxOutput: 32000 },
+  // MiMo V2.6：官方 mimo.mi.com 规格 1M / 128K。Zen 免费通道实测 262K 与 325K
+  // 超长输入均正常且能召回开头码字（models.dev/pi-ai 的 200K/32K 是过时数据，
+  // 会误导压缩阈值提前 5~6 倍）。2026-10-02 实测：视觉可用（图片正确读出 FLEDGE
+  // 42）；reasoning_effort 全档位接受，"none" 能真正关思考（reasoning 归零），但
+  // OFM 不提供 Off 档，故 canDisableThinking 仍为 false 以保留"思考与正文共享
+  // 上限"的翻倍预算；effortAware 让 Light/Balanced/Deep 映射成 low/high/max
+  // 真实生效。
+  { match: /^mimo.*v2\.6/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072, canDisableThinking: false, effortAware: true },
+  // MiMo V2.5：同上，官方 1M / 128K；视觉实测可用；effort 实测 "none" 关思考、
+  // low/max 改变推理量。
+  { match: /^mimo.*v2\.5/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072, canDisableThinking: false, effortAware: true },
+  { match: /^mimo/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072 },
   { match: /^muse.?spark/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072 },
   // Measured on this lane 2026-10-01 with a codeword planted in message 1 of the
   // transcript: still recalled at 900 032 tokens (and at 700 032), while the

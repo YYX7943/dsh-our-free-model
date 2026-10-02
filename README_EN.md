@@ -44,7 +44,7 @@
 - **Hot reload** — upgrades and code changes take effect immediately, no app restart; also available as a manual button and an optional file watcher.
 - **Region-aware, per egress** — models gated by geography are separated into their own `region-limited` group instead of failing mid-turn. Switch your network exit and the next probe reclassifies them automatically.
 - **The body decides what it is, not the header** — under load this gateway answers 200 with a JSON `Content-Type` over a perfectly ordinary SSE frame stream. The plugin sniffs the first bytes and replays them into the stream, so the turn keeps streaming instead of being thrown away — and a working model is never demoted to `unavailable` because one header lied.
-- **Thinking effort that actually binds** — `Light / Balanced / Deep` map to output-token budgets of 2 048 / 8 192 / the model's full capacity, and are recorded per call. A model that cannot switch thinking off (MiMo V2.6 among them) gets the whole ladder doubled to 4 096 / 16 384 / capacity, because there thinking and the visible answer compete for the one ceiling; every model card in the settings page prints the number it will actually send. This is not a `reasoning_effort` string thrown at an endpoint that ignores it (see [Why a budget](#why-a-budget-and-not-reasoning_effort)).
+- **Thinking effort that actually binds — a budget plus real `reasoning_effort`.** `Light / Balanced / Deep` first map to hard output-token budgets of 2 048 / 8 192 / the model's full capacity, recorded per call; a model that cannot switch thinking off (MiMo V2.6 among them) gets the whole ladder doubled to 4 096 / 16 384 / capacity, because there thinking and the visible answer compete for the one ceiling, and every model card in the settings page prints the number it will send. On top of that, for the six **effort-aware** models (fledge, space-bunny, MiMo V2.5/V2.6, Nemotron 3-ultra/3.5) the same rung also sends a real `reasoning_effort` upstream (`light`→`low`, `balanced`→`high`, `deep`→`max`), which is live-verified to work: fledge's visible output grows with the rung and it accepts only low/high/max (anything else is a 400), and MiMo/Nemotron's `none` genuinely switches thinking off. Non-effort-aware models (longcat, big-pickle, …) get the budget only, no effort string (their reasoning tokens are flat across rungs). See [Why a budget, and also `reasoning_effort`](#why-a-budget-and-also-reasoning_effort).
 - **Works without a browser UI** — only `llm` is a hard dependency, so the plugin activates on a headless composition such as dsh-tui and still serves its models. The dashboard half lives on its own fiber and mounts itself when `webServer` appears, so a composition that loads plugins before its HTTP server exists still gets its settings page. Availability probing and the background loops run on plain timers.
 - **Usage dashboard, local only** — token heatmap, cumulative curve by total or per model, output speed and time-to-first-token sampled per call. Nothing is uploaded.
 - **OpenAI-compatible forward port** — expose these models to any other local tool through a base URL plus a generated API key.
@@ -231,14 +231,36 @@ Design decisions worth knowing:
 - **Structural adapter, no `@deepseek-ai/dsh-llm` import.** The kernel never checks `instanceof`, so the adapter is duck-typed. This keeps the plugin from pinning itself to one kernel version and is what lets the same code run on both 0.1.5 and 0.1.7.
 - **Own JSON store instead of the settings seam.** The settings registration API differs between kernels; a private JSON store under `DSH_HOME` behaves identically on both and keeps the forward key in a `0600` file that never enters any shared settings document.
 
-### Why a budget, and not `reasoning_effort`
+### Why a budget, and also `reasoning_effort`
 
-Passing a reasoning-effort string upstream was measured to be a no-op on this
-lane: repeated samples at three different nominal effort levels produced
-statistically indistinguishable reasoning tokens. Shipping a control that does
-nothing is worse than shipping no control, so effort is implemented as a hard
-output-token ceiling, which does bind — recorded reasoning tokens rise
-monotonically with the level.
+An early measurement (2026-09-24) showed that sending a `reasoning_effort` string
+upstream was a no-op for the free models back then: repeated samples at three
+different nominal effort levels produced statistically indistinguishable reasoning
+tokens. So OFM implemented effort as a hard output-token ceiling, which does bind
+(recorded reasoning tokens rise monotonically with the rung, and a truncated
+`max_tokens` visibly shortens the answer).
+
+The conclusion was revised on 2026-10-02, when effort-aware models arrived:
+**fledge, space-bunny, MiMo V2.5/V2.6 and Nemotron 3-ultra/3.5 genuinely respond
+to `reasoning_effort`**. For those six models OFM sends the field on top of the
+budget (`light`→`low`, `balanced`→`high`, `deep`→`max`). Live measurements:
+
+- **fledge accepts only `low`/`high`/`max`** — `none`/`minimal`/`medium`/`xhigh`
+  are all 400. The rung changes the output: on the same ladder problem the mean
+  visible output went 413 → 547 → 704 tokens across light/balanced/deep, all three
+  correct, with thinking length rising alongside.
+- **MiMo V2.6/V2.5 and Nemotron zero their reasoning tokens on
+  `reasoning_effort=none`** (thinking really off) and vary thinking between
+  `low` and `max` — the field is not decorative.
+- **Non-effort-aware models (longcat, big-pickle, …) do not respond to the field**,
+  so OFM sends them the budget only, no effort string — measured reasoning tokens
+  stay flat across rungs (longcat 461/508/477), and the only difference between
+  rungs is how much output room the answer gets.
+
+So Light/Balanced/Deep are a dual mechanism: the budget always binds and is
+recorded per call; `reasoning_effort` is sent only to the six effort-aware models.
+Balanced vs Deep means "high + a 16 K ceiling" vs "max + the model's full capacity"
+on effort-aware models, and merely a different output ceiling on the others.
 
 ### Three kernel behaviours that cost real debugging time
 
@@ -439,7 +461,7 @@ browser and inside the DSHEAC AIO desktop window:
 | Client bundle hot swap | Replacing `client.js` reloaded the browser bundle automatically via the kernel's client-hmr (observed twice) |
 | Trust fence | Non-loopback Host / cross-site `sec-fetch-site` / foreign `Origin` all 403; cookieless loopback requests 401 (same as the kernel's `/api`) |
 | SSE push | `hello`/`announcements`/`update`/`upgraded` events verified; EventSource reconnects after a hot reload |
-| Effort propagation | light/balanced/deep measured live: reasoning 2048 (budget-truncated) / 3386 / 3522, output rising monotonically |
+| Effort propagation | Budget mechanism measured live (2026-09, pre-effort-aware): reasoning 2048 (budget-truncated) / 3386 / 3522 across light/balanced/deep, output rising monotonically; since 2026-10 the effort-aware models additionally receive a real `reasoning_effort` (see [Why a budget, and also reasoning_effort](#why-a-budget-and-also-reasoning_effort)) |
 | Region gating | Region-blocked model surfaces as `REGION_BLOCKED` and stays in its own group |
 | Gate drift | `FreeTierError` / "only be used from within OpenCode" classifies as `GATE_DRIFT` rather than `INVALID_CREDENTIAL`, and is deliberately outside the retryable set — re-sending the same identity gets the same answer. The discriminator does not depend on `status`, so an in-stream refusal (where `status` is `undefined`) is caught too. Measured: `403 code=GATE_DRIFT type=FreeTierError`, with the region and quota branches unchanged |
 | Outbound diagnostic switch | Both paths measured: `OUR_FREE_MODEL_DEBUG=1` and `~/.dsh/our-free-model/debug`. On → one line per request with endpoint, `x-opencode-*` gate headers, session/request ids, User-Agent, declared tool names and roles; off → no output at all. A planted secret string searched back through the trace: zero hits |

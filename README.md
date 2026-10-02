@@ -42,7 +42,7 @@
 - **应用内升级**——设置页一键升级：下载 → SHA-256 校验 → 备份 → 原子替换 → 校验回读 → 热重载，任一步失败自动回滚到上一个版本。
 - **热重载**——升级与代码更新即时生效，不需要重启应用；也可在设置页手动触发，或开启文件监视自动重载。
 - **流式响应认出 body 而不是认出 header**——网关在高负载下会用 `application/json` 的 content-type 回一整套 SSE 帧，插件按 body 的形状判定并把已嗅探的字节重新喂回流，既不会整轮报错，也不会因为一个 header 说谎就把能用的模型判成不可用。
-- **思考强度真的生效**——`Light / Balanced / Deep` 对应输出 token 预算 2 048 / 8 192 / 模型上限，且逐次调用留痕。思考关不掉的模型（MiMo V2.6 这类）三档整体翻倍为 4 096 / 16 384 / 模型上限，因为思考与正文抢的是同一份额度；设置页每张模型卡都直接印出这一档实际会下发的上限。它不是把一个 effort 字符串丢给上游然后假装有用（原因见[为什么用预算而不是 reasoning_effort](#为什么用预算而不是-reasoning_effort)）。
+- **思考强度真的生效，是"预算 + 真实 effort"双机制**——`Light / Balanced / Deep` 首先是一个**硬性输出 token 预算**（2 048 / 8 192 / 模型上限；思考关不掉的模型如 MiMo V2.6 这类，三档整体翻倍为 4 096 / 16 384 / 模型上限，因为思考与正文抢同一份额度；设置页每张模型卡直接印出该档实际会下发的上限）。其次，对 **effort-aware** 模型（fledge、space-bunny、MiMo V2.5/V2.6、Nemotron 3-ultra/3.5），同一档位还会把 `reasoning_effort` 真实发往上游（light→low、balanced→high、deep→max），实测该字段有效：fledge 的输出/思考长度随档位上升且只接受 low/high/max（其余值 400），MiMo/Nemotron 的 `none` 能真正关掉思考。对非 effort-aware 模型（longcat、big-pickle 等）则**纯为预算**、不发 effort 字段（实测推理 token 不随档位变化）。详见[为什么用预算，同时也发 reasoning_effort](#为什么用预算同时也发-reasoning_effort)。
 - **无浏览器界面也能跑**——插件只把 `llm` 当作硬依赖，没有 web server 的 composition（`dsh-tui` 这类）里照样启动、照样出模型；看板半身挂在一条自己的 fiber 上，等 `webServer` 出现再挂载，所以既不会把模型车道拖下水，也不会因为插件先于 web 服务加载就永远丢掉设置页。
 - **用量看板，全部留在本机**——Token 热力图、总量曲线（可看总计或单个模型）、输出速度与首字延迟逐次采样。不上传任何东西。
 - **OpenAI 兼容转发端口**——本机其它工具用一个 base URL + Key 就能调用这些模型。
@@ -214,11 +214,17 @@ client.js       浏览器半身：手写 ModuleLoader bundle，无构建步骤
 - **自己的 JSON 存储，而不是 settings seam**。settings 注册 API 在两版内核间不一致；
   私有 JSON 存储行为一致，并且转发 Key 落在一个 `0600` 文件里，不进入任何共享设置文档。
 
-### 为什么用预算，而不是 `reasoning_effort`
+### 为什么用预算，同时也发 `reasoning_effort`
 
-实测过：在这条车道上把 reasoning-effort 字符串发给上游是**空操作**——三个不同名义档位
-反复采样，思考 token 数量在统计上无法区分。做一个不起作用的控件比不做更糟，
-所以思考强度实现为**硬性输出 token 上限**，它确实会约束——留痕的思考 token 随档位单调上升。
+早期实测（2026-09-24）显示：把 `reasoning_effort` 字符串发给当时的大多数免费模型是**空操作**——三个名义档位反复采样，思考 token 在统计上无法区分。因此 OFM 把思考强度实现为**硬性输出 token 上限**（这个上限真实约束：`max_tokens` 被截断时答案变短，留痕的思考 token 随档位上升）。
+
+2026-10-02 引入 effort-aware 模型后，结论需要修正：fledge、space-bunny、MiMo V2.5/V2.6、Nemotron 3-ultra/3.5 这 6 个模型**会真正响应 `reasoning_effort`**。OFM 对这 6 个模型在预算之外同时发送 `reasoning_effort`（light→`low`、balanced→`high`、deep→`max`），实测：
+
+- **fledge 只接受 `low`/`high`/`max`**，`none`/`minimal`/`medium`/`xhigh` 一律 400；档位确实改变输出（同一道题 light/balanced/deep 的平均可见输出 413→547→704 token，全部答对，思考长度同步上升）。
+- **MiMo V2.6/V2.5、Nemotron 的 `reasoning_effort=none` 能把思考 token 真正归零**（关思考），`low`/`max` 会改变思考量——所以这个字段不是摆设。
+- **longcat、big-pickle 等非 effort-aware 模型不响应这个字段**，OFM 对它们**只发预算、不发 effort 字符串**——实测三档推理 token 基本不变（longcat 461/508/477），档位差异纯粹是答案可用的输出空间。
+
+所以现在的 Light/Balanced/Deep 是"**预算 + 真实 effort**"的双机制：预算永远生效、逐次调用留痕；`reasoning_effort` 只在能响应的 6 个 effort-aware 模型上发送。Balanced 与 Deep 的差异在 effort-aware 模型上是"high + 16K 上限"对"max + 模型全容量"，在非 effort-aware 模型上则只是输出空间不同。
 
 ### 三个真实浪费过调试时间的内核行为
 
@@ -381,7 +387,7 @@ token，并非精确 tokenizer 校验。超限就停止恢复，不会无限续�
 | 客户端 bundle 热更 | 替换 `client.js` 后浏览器端由内核 client-hmr 自动重载（实测两次） |
 | 信任围栏 | 非 loopback Host / 跨站 `sec-fetch-site` / 异源 `Origin` 一律 403；无 cookie 回环请求 401（与内核 `/api` 一致） |
 | SSE 推送 | `hello`/`announcements`/`update`/`upgraded` 事件实测；热重载后自动重连 |
-| 思考强度传递 | light/balanced/deep 三档实测：reasoning 2048（被预算截断）/ 3386 / 3522，输出单调上升 |
+| 思考强度传递 | 预算机制实测（2026-09，早于 effort-aware）：light/balanced/deep 的 reasoning 2048（被预算截断）/ 3386 / 3522，输出单调上升；2026-10 起 effort-aware 模型额外发送真实 `reasoning_effort`（见[为什么用预算，同时也发 reasoning_effort](#为什么用预算同时也发-reasoning_effort)） |
 | 地区门 | 受限模型报 `REGION_BLOCKED` 并留在自己的分组 |
 | 门禁漂移 | `FreeTierError` / "only be used from within OpenCode" 归 `GATE_DRIFT` 而不是 `INVALID_CREDENTIAL`，且不在可重试集合里——重发同一个身份只会拿到同一个答案；判据不依赖 `status`，流内拒绝（`status` 为 `undefined`）同样命中。实测：`403 code=GATE_DRIFT type=FreeTierError`，地区与配额两支分类不变 |
 | 出站诊断开关 | `OUR_FREE_MODEL_DEBUG=1` 与 `~/.dsh/our-free-model/debug` 两条通路实测：开 → 逐条打印端点、`x-opencode-*` 门禁头、会话/请求 id、UA、声明的工具名与角色；关 → 零输出。轨迹里塞入机密串反查，0 命中 |

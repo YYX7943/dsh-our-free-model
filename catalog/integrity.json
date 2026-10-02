@@ -69,8 +69,8 @@
     },
     {
       "path": "src/catalog.js",
-      "size": 8468,
-      "sha256": "9ddbf3dd10e362c5f5f44a6c7186a728fcd14f5a36ab23d2172745349f92934d"
+      "size": 8973,
+      "sha256": "cfc6ede3654ae473a42ed50430ca9ad7facb6d08ef6483d9b8c5aa65b8f3020a"
     },
     {
       "path": "src/channel.js",

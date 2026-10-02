@@ -75,7 +75,7 @@ export const CAPABILITIES = [
   // Stealth id, no suffix: 200 K / 32 K is the published figure (pi.dev and the
   // Zen free-model pages both say 200000 / 32000), text-only, answers anonymously.
   { match: /^big.?pickle/, vision: false, reasoning: true, contextWindow: 200000, maxOutput: 32000 },
-  { match: /^deepseek/, vision: false, reasoning: true, contextWindow: 200000, maxOutput: 128000 },
+  { match: /^deepseek/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 64000 },
   // Fledge（2026-10 新模型，Lab 未知）：models.dev 记录 1M / 131072；实测允许
   // reasoning_effort = ["low","high","max"]（"none" 直接 400），思考不能关。
   // effortAware 标记让 adapter 把 OFM 的 light/balanced/deep 映射成上游

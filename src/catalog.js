@@ -57,19 +57,25 @@ export const CAPABILITIES = [
   // fire at 128 000 × 0.8 = 102 400 tokens and discard roughly eight times the
   // window the model can hold. Corroborated by pi-ai's registry and the Zen
   // free-model table, both of which say 1 000 000.
-  { match: /^nemotron-3-ultra/, vision: false, reasoning: true, contextWindow: 1000000, maxOutput: 32768 },
+  { match: /^nemotron-3-ultra/, vision: false, reasoning: true, contextWindow: 1000000, maxOutput: 128000 },
   // Recalled the same way at 300 032 tokens; pi-ai and the free-model table both
   // say 262 144, so the threshold lands at 209 715 — inside what is proven.
-  { match: /^nemotron-3\.5/, vision: false, reasoning: true, contextWindow: 262144, maxOutput: 32768 },
+  { match: /^nemotron-3\.5/, vision: false, reasoning: true, contextWindow: 262144, maxOutput: 262144 },
   { match: /^nemotron/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 32768 },
-  { match: /^ling/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 32768 },
-  { match: /^space.?bunny/, vision: true, reasoning: true, contextWindow: 262144, maxOutput: 65536 },
-  { match: /^longcat/, vision: true, reasoning: true, contextWindow: 262144, maxOutput: 65536 },
+  { match: /^ling/, vision: false, reasoning: true, contextWindow: 262144, maxOutput: 32768 },
+  // Space Bunny（2026-09-23 发布，官方博客确认 1M 上下文）：models.dev 记录
+  // 1M / 524288，支持 effort low/medium/high/xhigh/max。旧值 262144/65536 偏小，
+  // 会提前 4 倍触发压缩。effortAware 让 OFM 的 light/balanced/deep 映射成
+  // low/high/max 发出（都在其允许范围内）。
+  { match: /^space.?bunny/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 524288, effortAware: true },
+  // LongCat 2.5 Preview（官方 LongCat 2.x 系列 1M 上下文）：models.dev 记录
+  // 1M / 131072。旧值 262144/65536 偏小约 4 倍。
+  { match: /^longcat/, vision: true, reasoning: true, contextWindow: 1000000, maxOutput: 131072 },
   { match: /^union/, vision: true, reasoning: false, contextWindow: 262144, maxOutput: 131072 },
   // Stealth id, no suffix: 200 K / 32 K is the published figure (pi.dev and the
   // Zen free-model pages both say 200000 / 32000), text-only, answers anonymously.
   { match: /^big.?pickle/, vision: false, reasoning: true, contextWindow: 200000, maxOutput: 32000 },
-  { match: /^deepseek/, vision: false, reasoning: true, contextWindow: 128000, maxOutput: 64000 },
+  { match: /^deepseek/, vision: false, reasoning: true, contextWindow: 200000, maxOutput: 128000 },
   // Fledge（2026-10 新模型，Lab 未知）：models.dev 记录 1M / 131072；实测允许
   // reasoning_effort = ["low","high","max"]（"none" 直接 400），思考不能关。
   // effortAware 标记让 adapter 把 OFM 的 light/balanced/deep 映射成上游

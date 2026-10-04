@@ -243,7 +243,10 @@ export class FreeModelAdapter {
       if (sealed) {
         const patch = effortPatchFor(options.reasoningEffort, entry)
         if (patch !== null) Object.assign(payload, patch)
-        applySealedPacingHint(payload)
+        // 用户自定义（2026-10-04）：暂时取消防过度思考提示词（SEALED_PACING_HINT），
+        // 以便实测 EAC 模型在各档位下没有该提示时的真实输出效果。
+        // 如要恢复官方行为，取消下面这行注释即可。
+        // applySealedPacingHint(payload)
       }
       return payload
     }

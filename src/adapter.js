@@ -6,11 +6,6 @@
  * lets this plugin mount on more than one kernel line without importing a
  * version-pinned adapter base class.
  *
- * That freedom is not free: there is no inherited default for any contract
- * method, so every method the kernel may call has to be declared here, even
- * the ones this route has no opinion about. `imageRequestPricing()` is the one
- * that bites — see its comment below.
- *
  * Two routes are published from one adapter instance, because the harness groups
  * the model picker strictly by provider route and offers no other grouping
  * field: `our-free-model` carries what this egress can use right now, and
@@ -25,10 +20,12 @@
 import { applyFingerprint, baseModelId, endpointFor, mintRequestId, sessionForConversation, wireFor } from './upstream.js'
 import { toChatMessages, toClaudeMessages, toResponseInput, toToolDefs, repairToolPairing } from './messages.js'
 import { CODE, UpstreamError, postStreamed } from './http.js'
+import { postSealedStreamed } from './eac.js'
 import { finishReason, readStream, windowTokens } from './stream.js'
-import { DEFAULT_LEVEL, MIN_BUDGET, EFFORT_WIRE, budgetFor, effortsFor, resolveLevel } from './effort.js'
+import { DEFAULT_LEVEL, MIN_BUDGET, EFFORT_WIRE, budgetFor, defaultEffortFor, effortPatchFor, effortsFor, resolveLevel } from './effort.js'
 import { createChannel } from './channel.js'
-import { recoveryPolicy, canRecover, recoveryMessages, checkpointFits, addUsage, createBlockTracker } from './recovery.js'
+import { recoveryPolicy, canRecover, canRecoverSilentStop, recoveryMessages, checkpointFits, addUsage, createBlockTracker } from './recovery.js'
+import { isEacEntry } from './catalog.js'
 
 export const ROUTE_MAIN = 'our-free-model'
 export const ROUTE_REGION = 'our-free-model-region'
@@ -83,23 +80,6 @@ export class FreeModelAdapter {
     })
   }
 
-  /**
-   * This route declares no request-image pricing, so the token meter falls
-   * back to its own neutral image estimate.
-   *
-   * `ctx.llm` forwards this call unguarded — it looks the adapter up with `?.`
-   * but invokes the method without checking it exists — so an adapter that
-   * omits the method turns every compaction into
-   * `TypeError: ...imageRequestPricing is not a function`. Declaring it here
-   * keeps `/compact` working: the base class documents `undefined` as "this
-   * route prices no images", and `priceSurface` treats that as the fixed
-   * heuristic. That is the honest answer here anyway — this gateway publishes
-   * no vision-token accounting, so any figure we invented would be a guess.
-   */
-  imageRequestPricing() {
-    return undefined
-  }
-
   /** Models this route advertises right now. */
   async listModels(provider) {
     const state = this.deps.state()
@@ -136,7 +116,7 @@ export class FreeModelAdapter {
       inputModalities: entry.vision ? ['text', 'image'] : ['text'],
       context: { contextWindow: entry.contextWindow },
       defaultMaxTokens: ceiling,
-      ...efforts === undefined ? {} : { reasoning: { efforts, defaultEffort: DEFAULT_LEVEL } },
+      ...efforts === undefined ? {} : { reasoning: { efforts, defaultEffort: defaultEffortFor(entry) } },
     }
   }
 
@@ -210,7 +190,8 @@ export class FreeModelAdapter {
       return
     }
 
-    const wire = wireFor(entry.id)
+    const sealed = isEacEntry(entry)
+    const wire = sealed ? 'chat' : wireFor(entry.id)
     const style = STYLE_FOR_WIRE[wire]
     const warnings = []
     const resolveImage = this.deps.resolveImage
@@ -245,16 +226,25 @@ export class FreeModelAdapter {
     const payloadFor = (input, ceiling, recovering, sink) => {
       const payload = buildPayload(wire, entry.id, input, options, ceiling, resolveImage, sink)
       if (declared.length > 0) payload.tools = declared
-      // Fledge 等 effort-aware 模型：把 OFM 的 effort 等级映射成上游真正认识的
-      // reasoning_effort 字段。不带该字段时 fledge 只回"复述用户输入"的伪推理，
-      // 且推理内容走 reasoning_content 字段；带 low/high/max 才做真正的深度推理。
+      if (typeof options.temperature === 'number' && Number.isFinite(options.temperature)) payload.temperature = options.temperature
+      if (wire !== 'responses' && Array.isArray(options.stop) && options.stop.length > 0) payload.stop = options.stop
+      if (recovering) payload.tool_choice = wire === 'messages' ? { type: 'none' } : 'none'
+      // Fledge 等 effort-aware 免费模型：把 OFM 的 effort 等级映射成网关真正
+      // 认识的 reasoning_effort 字段。不带该字段时 fledge 只回"复述用户输入"
+      // 的伪推理，且推理内容走 reasoning_content 字段；带 low/high/max 才做
+      // 真正的深度推理。
       if (wire === 'chat' && entry.effortAware === true) {
         const wireEffort = EFFORT_WIRE[resolveLevel(options.reasoningEffort, entry)?.id]
         if (wireEffort) payload.reasoning_effort = wireEffort
       }
-      if (typeof options.temperature === 'number' && Number.isFinite(options.temperature)) payload.temperature = options.temperature
-      if (wire !== 'responses' && Array.isArray(options.stop) && options.stop.length > 0) payload.stop = options.stop
-      if (recovering) payload.tool_choice = wire === 'messages' ? { type: 'none' } : 'none'
+      // The co-paid lane's thinking is the model's own effort field, applied as
+      // a JSON merge patch on the request body (ZCode's declaration shape); the
+      // free lane keeps its token-budget behaviour untouched.
+      if (sealed) {
+        const patch = effortPatchFor(options.reasoningEffort, entry)
+        if (patch !== null) Object.assign(payload, patch)
+        applySealedPacingHint(payload)
+      }
       return payload
     }
 
@@ -268,7 +258,9 @@ export class FreeModelAdapter {
       const attemptStarted = Date.now()
       const recovering = attempt === 1
       const payload = payloadFor(attemptMessages, attemptBudget, recovering, recovering ? [] : warnings)
-      const renameMap = applyFingerprint(payload, wire === 'messages' ? 'claude' : style === 'flat')
+      // The co-paid relay has no tool-name gate; its models see the caller's
+      // tools exactly as declared, so the fingerprint pass is free-lane only.
+      const renameMap = sealed ? new Map() : applyFingerprint(payload, wire === 'messages' ? 'claude' : style === 'flat')
       const controller = new AbortController()
       const onAbort = () => controller.abort(options.signal?.reason)
       options.signal?.addEventListener('abort', onAbort, { once: true })
@@ -281,13 +273,16 @@ export class FreeModelAdapter {
       }, timeoutMs) : undefined
       timer?.unref?.()
       const channel = createChannel()
-      const request = postStreamed({
-        path: endpointFor(entry.id), body: payload, session,
-        requestId: attempt === 0 ? recoveryId : mintRequestId(),
-        attributionUserAgent: snapshot.attributionUserAgent,
-        signal: controller.signal,
-        onData: value => channel.push(value),
-      }).then(() => channel.push(undefined))
+      const request = (sealed
+        ? postSealedTurn(this.deps, payload, controller.signal, value => channel.push(value))
+        : postStreamed({
+          path: endpointFor(entry.id), body: payload, session,
+          requestId: attempt === 0 ? recoveryId : mintRequestId(),
+          attributionUserAgent: snapshot.attributionUserAgent,
+          signal: controller.signal,
+          onData: value => channel.push(value),
+        }))
+        .then(() => channel.push(undefined))
         .catch(error => channel.push(error instanceof Error ? error : new Error(String(error))))
       let firstDeltaAt
       let delivered = false
@@ -359,21 +354,30 @@ export class FreeModelAdapter {
           yield { type: 'finish', reason: { kind: 'aborted', failure: { message: 'request aborted', code: CODE.aborted } } }
           return
         }
-        if (!recovering && canRecover(outcome, policy, Date.now() - started)) {
+        const reason = outcome.brokenToolCall === true ? { kind: 'max-tokens' } : finishReason(outcome.finish)
+        // finishReason 是兜底映射，failed/cancelled 也会落成 stop：正常收尾的判定必须显式查原 token。
+        const elapsed = Date.now() - started
+        const interrupted = canRecover(outcome, policy, elapsed)
+        const silentStop = !interrupted && reason.kind === 'stop'
+          // 无 token 的正常收尾（message_stop / response.done 不带 status）也算停收；failed、length 这类有 token 的收尾仍被挡在外面。
+          && (outcome.finish === undefined || ['stop', 'end_turn', 'stop_sequence'].includes(outcome.finish))
+          && canRecoverSilentStop(outcome, policy, elapsed)
+        if (!recovering && (interrupted || silentStop)) {
           const remainingTokens = budget - (outcome.sawUsage ? outcome.usage.outputTokens ?? 0 : 0)
           const continuationBudget = Math.min(remainingTokens, policy.maxOutputTokens)
           const continuationMessages = recoveryMessages(messages, outcome.reasoningText)
           if (continuationBudget >= MIN_BUDGET
             && checkpointFits(payloadFor(continuationMessages, continuationBudget, true, []), entry, outcome.reasoningText, continuationBudget)) {
             record(false, outcome, { truncated: true, recoveryScheduled: true })
-            this.deps.warn?.('our-free-model: interrupted reasoning; continuing once from its checkpoint')
+            this.deps.warn?.(silentStop
+              ? 'our-free-model: a stopped turn held only its reasoning; continuing once from its checkpoint'
+              : 'our-free-model: interrupted reasoning; continuing once from its checkpoint')
             attemptMessages = continuationMessages
             attemptBudget = continuationBudget
             continuationScheduled = true
             continue
           }
         }
-        const reason = outcome.brokenToolCall === true ? { kind: 'max-tokens' } : finishReason(outcome.finish)
         const failedEnding = outcome.finish === 'failed' || outcome.finish === 'cancelled'
         const normalEnding = outcome.finish === undefined || ['stop', 'end_turn', 'stop_sequence'].includes(outcome.finish)
         if (outcome.sawFinish !== true || failedEnding || (recovering && (!sawAnswer
@@ -433,6 +437,43 @@ export class FreeModelAdapter {
       }
     }
   }
+}
+
+/** The co-paid reasoning models can burn minutes in the thinking channel on
+ * turns that need seconds (observed: an entire small token budget spent on
+ * reasoning for a one-line answer, first visible byte minutes late). The
+ * effort menu owns the hard depth; this one-line prompt asks for pacing so a
+ * turn does not sit silent while the model over-explores. Applied on every
+ * sealed build, so the continuation and recovery payloads carry it too. */
+const SEALED_PACING_HINT =
+  'Avoid overthinking: keep your reasoning brief and proportionate to the task.'
+
+function applySealedPacingHint(payload) {
+  if (Array.isArray(payload.messages)) {
+    const system = payload.messages.find(message => message?.role === 'system' && typeof message.content === 'string')
+    if (system !== undefined) {
+      system.content = system.content === '' ? SEALED_PACING_HINT : `${system.content}\n\n${SEALED_PACING_HINT}`
+      return
+    }
+    payload.messages.unshift({ role: 'system', content: SEALED_PACING_HINT })
+    return
+  }
+  if (typeof payload.system === 'string') {
+    payload.system = payload.system === '' ? SEALED_PACING_HINT : `${payload.system}\n\n${SEALED_PACING_HINT}`
+  }
+}
+
+/**
+ * One co-paid-lane turn: unlock the sealed credential for this request frame
+ * and hand it straight to the lane's poster. A host the gate refuses — or a
+ * seal that does not open — is a non-retryable configuration state, not a
+ * transport fault: `LANE_LOCKED` is deliberately outside the retryable set so
+ * a locked host fails its turn once, with a plain message and no retry storm.
+ */
+async function postSealedTurn(deps, payload, signal, onData) {
+  const credential = await Promise.resolve(deps.sealedCredential?.())
+  if (credential === null || credential === undefined) throw new UpstreamError('this model lane is not available on this host', 'LANE_LOCKED')
+  return postSealedStreamed({ credential, body: payload, signal, onData })
 }
 
 function buildPayload(wire, modelId, messages, options, budget, resolveImage, warnings) {

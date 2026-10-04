@@ -47,7 +47,7 @@ window.__ModuleLoader__.load({
         'state.available': '可用',
         'state.region-blocked': '地区受限',
         'state.unavailable': '暂不可用',
-        'state.throttled': '已达限额',
+        'state.throttled': '暂不可用',
         'state.unknown': '未探测',
         'hint.region': '该模型按出口地区放行。开启网络代理后，插件会在下一次探测自动把它移入可用分组。',
         'hint.unknown': '尚未探测，默认保持可达。',
@@ -63,6 +63,7 @@ window.__ModuleLoader__.load({
         'tag.context': '上下文',
         'tag.output': '最长输出',
         'tag.latency': '首字',
+        'tag.eacChannel': 'EAC 渠道 · 仅桌面端',
         'section.models': '模型清单',
         'section.modelsHint': '名称与能力来自上游清单与公开能力表，可用性由本机出口实测得出。',
         'section.dash': '用量看板',
@@ -115,6 +116,21 @@ window.__ModuleLoader__.load({
         'forward.copied': '已复制',
         'forward.example': '调用示例',
         'forward.error': '启动失败：{message}',
+        'forward.notice': '端口提示：{message}',
+        'forward.lanTitle': '局域网访问',
+        'forward.lanHint': '让同一网络里的其它设备也用这个转发端口。默认关闭；开启后中继需要一把单独的 Key。',
+        'forward.lanEnabled': '允许局域网访问',
+        'forward.lanPort': '局域网端口',
+        'forward.lanAuto': '0 = 自动分配',
+        'forward.lanApply': '应用局域网设置',
+        'forward.lanRunning': '局域网中继已监听',
+        'forward.lanStopped': '局域网中继未启用',
+        'forward.lanError': '局域网中继启动失败：{message}',
+        'forward.lanKey': '局域网 Key',
+        'forward.lanRotateWarn': '重新生成后，局域网里的设备都要换新 Key；本机工具不受影响。',
+        'forward.lanWarn': '开启后，能连到这台机器的任何人都可以用这个 Key 花掉本机的免费额度。请只在信任的网络里开启，必要时用防火墙限制来源。',
+        'forward.lanUrl': '局域网地址',
+        'forward.lanNoAddress': '没有检测到局域网 IPv4 地址',
         'pref.enabled': '启用免费模型',
         'pref.exposeRegion': '展示地区受限模型',
         'pref.interval': '自动探测间隔（分钟）',
@@ -220,7 +236,7 @@ window.__ModuleLoader__.load({
         'state.available': 'Available',
         'state.region-blocked': 'Region-limited',
         'state.unavailable': 'Unavailable',
-        'state.throttled': 'Quota reached',
+        'state.throttled': 'Temporarily unavailable',
         'state.unknown': 'Not probed',
         'hint.region': 'This model is gated by egress country. Once a proxy changes your egress, the next probe moves it into the available group by itself.',
         'hint.unknown': 'Not probed yet, so it stays reachable.',
@@ -236,6 +252,7 @@ window.__ModuleLoader__.load({
         'tag.context': 'Context',
         'tag.output': 'Max output',
         'tag.latency': 'First token',
+        'tag.eacChannel': 'EAC lane · desktop hosts only',
         'section.models': 'Model roster',
         'section.modelsHint': 'Names and capacities come from the upstream roster and published capability tables; availability is measured from this machine.',
         'section.dash': 'Usage dashboard',
@@ -288,6 +305,21 @@ window.__ModuleLoader__.load({
         'forward.copied': 'Copied',
         'forward.example': 'Example',
         'forward.error': 'Could not start: {message}',
+        'forward.notice': 'Port notice: {message}',
+        'forward.lanTitle': 'Network access',
+        'forward.lanHint': 'Let other devices on the same network use this forward port too. Off by default; the relay demands a key of its own.',
+        'forward.lanEnabled': 'Allow network access',
+        'forward.lanPort': 'Network port',
+        'forward.lanAuto': '0 = pick one automatically',
+        'forward.lanApply': 'Apply network settings',
+        'forward.lanRunning': 'Network relay listening',
+        'forward.lanStopped': 'Network relay off',
+        'forward.lanError': 'Could not start the network relay: {message}',
+        'forward.lanKey': 'Network key',
+        'forward.lanRotateWarn': 'Regenerating makes every device on the network switch keys; tools on this machine are unaffected.',
+        'forward.lanWarn': 'While this is on, anyone who can reach this machine can spend its free quota with that key. Enable it only on a network you trust, and narrow the sources with a firewall if you can.',
+        'forward.lanUrl': 'Network URL',
+        'forward.lanNoAddress': 'No network IPv4 address was detected',
         'pref.enabled': 'Enable free models',
         'pref.exposeRegion': 'Show region-limited models',
         'pref.interval': 'Auto-probe interval (minutes)',
@@ -413,6 +445,7 @@ window.__ModuleLoader__.load({
 .ofm_id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:var(--dsw-alias-label-tertiary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ofm_tags{display:flex;gap:5px;flex-wrap:wrap}
 .ofm_tag{font-size:10.5px;padding:2px 7px;border-radius:6px;background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-secondary)}
+.ofm_chantag{font-size:10px;font-weight:600;padding:2px 7px;border-radius:6px;border:1px solid var(--dsw-alias-state-business-primary);color:var(--dsw-alias-state-business-primary);white-space:nowrap}
 .ofm_metrics{display:flex;gap:12px;font-size:11px;color:var(--dsw-alias-label-tertiary);flex-wrap:wrap}
 .ofm_metrics b{color:var(--dsw-alias-label-secondary);font-weight:600;font-variant-numeric:tabular-nums}
 .ofm_note{font-size:11px;color:var(--dsw-alias-label-tertiary);line-height:1.5}
@@ -1031,6 +1064,7 @@ window.__ModuleLoader__.load({
       const rung = (m.budgets ?? []).find(row => row.isDefault === true)
       return h('article', { className: 'ofm_card' + (dim ? ' dim' : '') },
         h('div', { className: 'ofm_cardhead' },
+          m.channel === 'eac' ? h('span', { className: 'ofm_chantag', title: t('tag.eacChannel') }, 'EAC') : null,
           h('span', { className: 'ofm_cardname', title: m.name }, m.name),
           h('span', { className: 'ofm_badge ' + m.availability }, t(stateKey))),
         h('div', { className: 'ofm_id', title: m.id }, m.id),
@@ -1191,7 +1225,7 @@ window.__ModuleLoader__.load({
     function Forward(props) {
       const { settings, t, onApply, busy } = props
       const [draft, setDraft] = useState(settings.forward)
-      useEffect(() => setDraft(settings.forward), [settings.forward?.enabled, settings.forward?.host, settings.forward?.port])
+      useEffect(() => setDraft(settings.forward), [settings.forward?.enabled, settings.forward?.host, settings.forward?.port, settings.forward?.lan?.enabled, settings.forward?.lan?.port, settings.forward?.lan?.running])
       const [key, setKey] = useState('')
       const [shown, setShown] = useState(false)
       const [copied, setCopied] = useState('')
@@ -1210,6 +1244,22 @@ window.__ModuleLoader__.load({
       })
       const curl = `curl ${base}/chat/completions \\\n  -H "authorization: Bearer ${shown && key !== '' ? key : '<API KEY>'}" \\\n  -H "content-type: application/json" \\\n  -d '{"model":"<model id>","messages":[{"role":"user","content":"hi"}]}'`
 
+      // The relay is a door of its own: its own key, its own liveness, and an
+      // address that only exists while it is listening.
+      const lan = draft?.lan
+      const [lanKey, setLanKey] = useState('')
+      const [lanShown, setLanShown] = useState(false)
+      useEffect(() => {
+        if (lan?.running !== true) return
+        let alive = true
+        api('/forward/lan/key').then(payload => { if (alive) setLanKey(payload.key ?? '') }).catch(() => {})
+        return () => { alive = false }
+      }, [lan?.running])
+      const lanPort = lan?.actualPort ?? lan?.port ?? 0
+      const lanHost = (lan?.addresses ?? [])[0] ?? ''
+      const lanUrl = lanHost === '' ? t('forward.lanNoAddress') : `http://${lanHost}:${lanPort}/v1`
+      const lanToggle = current => ({ ...current, lan: { ...(current?.lan ?? {}), enabled: !(current?.lan?.enabled === true) } })
+
       return h(Panel, null,
         h('div', { className: 'ofm_row' },
           h(Switch, { checked: draft?.enabled === true, label: t('forward.enabled'), onChange: () => setDraft(current => ({ ...current, enabled: !(current?.enabled === true) })) }),
@@ -1219,6 +1269,7 @@ window.__ModuleLoader__.load({
           field(t('forward.port'), h('input', { className: 'ofm_input', style: { maxWidth: 110 }, inputMode: 'numeric', value: draft?.port ?? '', onChange: e => setDraft(c => ({ ...c, port: Number(e.target.value.replace(/\D/g, '')) || 0 })) })),
           h(Button, { kind: 'primary', disabled: busy || draft?.enabled === undefined, onClick: () => onApply({ forward: { enabled: draft.enabled === true, host: draft.host, port: draft.port } }) }, t('forward.apply'))),
         draft?.error ? h('div', { className: 'ofm_callout ofm_error' }, t('forward.error').replace('{message}', draft.error)) : null,
+        draft?.notice ? h('div', { className: 'ofm_callout' }, t('forward.notice').replace('{message}', draft.notice)) : null,
         draft?.running === true ? h(Fragment, null,
           h('div', { className: 'ofm_row' },
             h('span', { className: 'ofm_note' }, t('forward.baseUrl')),
@@ -1232,7 +1283,30 @@ window.__ModuleLoader__.load({
             h(Button, { kind: 'ghost', title: t('forward.rotateWarn'), onClick: async () => { const payload = await post('/forward/rotate'); setKey(payload.key ?? ''); setShown(true) } }, t('forward.rotate'))),
           h('div', { className: 'ofm_sec', style: { gap: 4 } }, h('span', { className: 'ofm_note' }, t('forward.example')),
             h('pre', { className: 'ofm_mono' }, curl),
-            h('div', null, h(Button, { kind: 'ghost', onClick: () => doCopy('curl', curl) }, copied === 'curl' ? t('forward.copied') : t('forward.copy'))))) : null)
+            h('div', null, h(Button, { kind: 'ghost', onClick: () => doCopy('curl', curl) }, copied === 'curl' ? t('forward.copied') : t('forward.copy'))))) : null,
+        h('div', { className: 'ofm_sec', style: { gap: 6, marginTop: 12 } },
+          h('div', { className: 'ofm_note' }, t('forward.lanTitle')),
+          h('div', { className: 'ofm_row' },
+            h(Switch, { checked: lan?.enabled === true, label: t('forward.lanEnabled'), onChange: () => setDraft(lanToggle) }),
+            h('span', { className: 'ofm_pill' }, h('span', { className: `ofm_dot ${lan?.running === true ? 'ok' : lan?.error ? 'err' : ''}` }), lan?.running === true ? t('forward.lanRunning') : t('forward.lanStopped'))),
+          h('div', { className: 'ofm_row' },
+            field(t('forward.lanPort'), h('input', { className: 'ofm_input', style: { maxWidth: 110 }, inputMode: 'numeric', value: lan?.port ?? 0, onChange: e => setDraft(c => ({ ...c, lan: { ...(c?.lan ?? {}), port: Number(e.target.value.replace(/\D/g, '')) || 0 } })) })),
+            h('span', { className: 'ofm_note' }, t('forward.lanAuto')),
+            h(Button, { kind: 'primary', disabled: busy, onClick: () => onApply({ forward: { enabled: draft?.enabled === true, host: draft?.host, port: draft?.port, lan: { enabled: lan?.enabled === true, port: lan?.port ?? 0 } } }) }, t('forward.lanApply'))),
+          h('div', { className: 'ofm_callout' }, t('forward.lanWarn')),
+          h('div', { className: 'ofm_note' }, t('forward.lanHint')),
+          lan?.error ? h('div', { className: 'ofm_callout ofm_error' }, t('forward.lanError').replace('{message}', lan.error)) : null,
+          lan?.running === true ? h(Fragment, null,
+            h('div', { className: 'ofm_row' },
+              h('span', { className: 'ofm_note' }, t('forward.lanUrl')),
+              h('code', { className: 'ofm_mono', style: { padding: '4px 8px', flex: 1, minWidth: 200 } }, lanUrl),
+              h(Button, { kind: 'ghost', onClick: () => doCopy('lanUrl', lanUrl) }, copied === 'lanUrl' ? t('forward.copied') : t('forward.copy'))),
+            h('div', { className: 'ofm_row' },
+              h('span', { className: 'ofm_note' }, t('forward.lanKey')),
+              h('code', { className: 'ofm_mono', style: { padding: '4px 8px', flex: 1, minWidth: 200, letterSpacing: lanShown ? 0 : 1 } }, lanKey === '' ? '…' : lanShown ? lanKey : '•'.repeat(24)),
+              h(Button, { kind: 'ghost', onClick: () => setLanShown(value => !value) }, lanShown ? t('forward.hide') : t('forward.show')),
+              h(Button, { kind: 'ghost', onClick: () => doCopy('lanKey', lanKey) }, copied === 'lanKey' ? t('forward.copied') : t('forward.copy')),
+              h(Button, { kind: 'ghost', title: t('forward.lanRotateWarn'), onClick: async () => { const payload = await post('/forward/lan/rotate'); setLanKey(payload.key ?? ''); setLanShown(true) } }, t('forward.rotate')))) : null))
     }
 
     const field = (label, control) => h('label', { className: 'ofm_field' }, h('span', null, label), control)

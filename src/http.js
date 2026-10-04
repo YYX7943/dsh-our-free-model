@@ -133,7 +133,7 @@ export function sniffBody(text) {
  * @param {number} options.timeoutMs - how long to wait for anything at all
  * @returns {Promise<{reader:object, chunks:Uint8Array[], done:boolean, text:string, decoder:TextDecoder}>}
  */
-async function readHead(stream, limit, { signal, timeoutMs }) {
+export async function readHead(stream, limit, { signal, timeoutMs }) {
   const reader = stream.getReader()
   const chunks = []
   // One decoder for the whole body: flushing here would corrupt a multi-byte
@@ -220,7 +220,7 @@ async function headRead(reader, signal, deadline) {
  * Turn a head that was already read, plus the reader that follows it, back into
  * one byte stream.
  */
-function replayStream(head) {
+export function replayStream(head) {
   const stream = (async function* () {
     try {
       for (const chunk of head.chunks) yield chunk

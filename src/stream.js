@@ -71,6 +71,10 @@ class BlockSink {
     this.sawReasoning = false
     this.sawToolCall = false
     this.reasoningText = ''
+    /** Concatenated answer text, capped like the reasoning checkpoint — feeds
+     * the max-tokens continuation without buffering more than one cap's worth. */
+    this.answerText = ''
+    this.answerLimit = checkpointLimit
     this.checkpointLimit = checkpointLimit
     this.checkpointTruncated = false
     this.brokenToolCall = false
@@ -122,6 +126,11 @@ class BlockSink {
     const scrubbed = this.dsml.push(delta)
     if (scrubbed === '') return
     this.sawText = true
+    if (this.answerText.length < this.answerLimit) {
+      this.answerText += this.answerText.length + scrubbed.length > this.answerLimit
+        ? scrubbed.slice(0, this.answerLimit - this.answerText.length)
+        : scrubbed
+    }
     const block = this.slot(key, 'text')
     block.text += scrubbed
     this.emit({ type: 'text-delta', index: block.index, text: scrubbed })
@@ -150,7 +159,12 @@ class BlockSink {
     if (!delta) return
     const block = this.slot(key, 'tool-call')
     block.args += delta
-    this.emit({ type: 'tool-call-delta', index: block.index, id: block.id, name: block.name === '' ? undefined : block.name, argumentsDelta: delta })
+    // Arguments can arrive before the wire has named the call (a Claude-relay
+    // stream does exactly this). The harness re-reads every chunk through a
+    // lossless-JSON snapshot, which rejects an own `undefined` field outright —
+    // so an unknown name is omitted from the delta, never sent as undefined.
+    const name = typeof block.name === 'string' && block.name !== '' ? { name: block.name } : {}
+    this.emit({ type: 'tool-call-delta', index: block.index, id: block.id ?? '', ...name, argumentsDelta: delta })
   }
 
   closeAll() {
@@ -174,7 +188,9 @@ class BlockSink {
         try { JSON.parse(block.args === '' ? '{}' : block.args) } catch { this.brokenToolCall = true }
         this.emit({
           type: 'block-end', index: block.index,
-          block: { type: 'tool-call', id: block.id, name: block.name, arguments: block.args === '' ? '{}' : block.args },
+          // A call that never learned its id or name still has to close with
+          // strings: the same lossless-JSON snapshot rejects `undefined`.
+          block: { type: 'tool-call', id: block.id ?? '', name: block.name ?? '', arguments: block.args === '' ? '{}' : block.args },
         })
       }
     }
@@ -415,6 +431,7 @@ export async function * readStream(lines, wire, renameMap, now = () => Date.now(
     ...state,
     nextIndex: sink.next,
     reasoningText: sink.reasoningText,
+    answerText: sink.answerText,
     checkpointTruncated: sink.checkpointTruncated,
     usage: state.usage ?? { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
   })

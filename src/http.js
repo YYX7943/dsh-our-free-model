@@ -24,8 +24,9 @@
 
 import { CLIENT_UA, UPSTREAM_BASE, gatewayHeaders, truncateSession } from './upstream.js'
 import { describeBody, trace } from './debug.js'
+import { egressFetch } from './egress.js'
 
-/** Harness-neutral failure codes (packages/llm/llm/src/error.ts vocabulary). */
+/** Harness-neutral failure codes (packages/llm/llm/src/error.ts vocabulary; CLIENT_ERROR extends it like CONFIG_DISABLED does). */
 export const CODE = {
   region: 'REGION_BLOCKED',
   quota: 'RATE_LIMIT',
@@ -43,6 +44,7 @@ export const CODE = {
   transport: 'TRANSPORT',
   timeout: 'TIMEOUT',
   server: 'SERVER',
+  client: 'CLIENT_ERROR',
   empty: 'EMPTY_RESPONSE',
   aborted: 'ABORTED',
 }
@@ -71,6 +73,17 @@ export function classifyFailure(status, payload, retryAfterMs) {
   if (status === 429 || type === 'FreeUsageLimitError' || /usage limit|rate limit/i.test(flat)) {
     return new UpstreamError(message, CODE.quota, { status, type, providerRetryAfterMs: retryAfterMs })
   }
+// The gateway rejects a signature only when the bytes it received differ from
+  // the bytes that were signed — the credential itself is fine. On this lane
+  // the usual cause is a local proxy plugin rewriting the body after signing
+  // (issue #50), so it is neither INVALID_CREDENTIAL (users chase re-login and
+  // re-installs for nothing) nor retryable-4xx territory: same body, same
+  // rewrite, same refusal. TRANSPORT names the hop that mangled the request.
+  if ((status === 401 || status === 403) && /signature rejected|signature mismatch/i.test(flat)) {
+    return new UpstreamError(
+      'the gateway rejected the request signature — the request body was modified in transit; if a local proxy plugin (e.g. billion-context) is installed, disable it for this lane or enable its passthrough for signed requests',
+      CODE.transport, { status, type, signatureRejected: true })
+  }
   // Deliberately status-independent: a refusal can arrive inside a 200 stream,
   // where `status` is not yet known (`stream.js` calls this with `undefined`).
   if (type === 'FreeTierError' || type === 'MissingSessionID'
@@ -80,6 +93,15 @@ export function classifyFailure(status, payload, retryAfterMs) {
   if (status === 401 || status === 403) return new UpstreamError(message, CODE.credential, { status, type })
   if (type === 'ModelError' || /model is unavailable|not supported/.test(flat)) {
     return new UpstreamError(message, CODE.server, { status, type, unavailable: true })
+  }
+  // 4xx is the request's own fault: replaying the identical body reproduces the
+  // identical refusal, so it stays outside the harness's retryable set — which
+  // is why SERVER (retryable) must not be the fallback for it. 408 and 425 are
+  // the carve-out: they name the gateway's own timing trouble, and a re-send
+  // can answer differently. Out-of-band callers pass no status at all, so they
+  // keep falling through to SERVER below.
+  if (status >= 400 && status < 500 && status !== 408 && status !== 425) {
+    return new UpstreamError(message, CODE.client, { status, type })
   }
   return new UpstreamError(message, CODE.server, { status, type })
 }
@@ -307,7 +329,7 @@ export async function postStreamed({ path, body, session, requestId, attribution
   })
   let response
   try {
-    response = await fetch(`${UPSTREAM_BASE}${path}`, { method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal })
+    response = await egressFetch(`${UPSTREAM_BASE}${path}`, { method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal })
   } catch (error) {
     // The signal's own reason is what fetch rejects with, and Node's is a
     // `TimeoutError`/user Error rather than `AbortError` — testing the name alone
@@ -450,7 +472,7 @@ export async function getJson(path, { session, requestId, attributionUserAgent, 
   const onCallerAbort = () => { callerAborted = true; controller.abort() }
   signal?.addEventListener('abort', onCallerAbort, { once: true })
   try {
-    const response = await fetch(`${UPSTREAM_BASE}${path}`, { headers, redirect: 'error', signal: controller.signal })
+const response = await egressFetch(`${UPSTREAM_BASE}${path}`, { headers, redirect: 'error', signal: controller.signal })
     trace('GET', { path, status: response.status })
     const text = await response.text()
     let payload

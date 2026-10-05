@@ -16,7 +16,8 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { chatFrames, callRoute, fakeContext, freePort, stubUpstream, until } from './lib/fake-kernel.mjs'
+import { EventEmitter } from 'node:events'
+import { chatFrames, callRoute, FakeRequest, fakeContext, freePort, stubUpstream, until } from './lib/fake-kernel.mjs'
 
 let failures = 0
 const check = (name, actual, expected) => {
@@ -253,6 +254,14 @@ function readSettings() {
   return [row.probeIntervalMinutes, row.feedPollMinutes, row.defaultMaxTokens]
 }
 
+// The ack version rides a query string with no length limit of its own and lands
+// in settings.json beside every other setting; nothing downstream ever compares
+// more than a version id, so the write is capped on the way in rather than
+// letting a caller pick the file's shape.
+await callRoute(api(), 'POST', `/api/our-free-model/announcement/ack?version=${'v'.repeat(4096)}`)
+const ackedVersion = JSON.parse(fs.readFileSync(path.join(scratch, 'our-free-model', 'settings.json'), 'utf8')).announcementAck
+check('an oversized ack version is capped before it reaches disk', typeof ackedVersion === 'string' && ackedVersion.length <= 64, true)
+
 // The forward listener spends this machine's free lane, so it binds loopback and
 // nothing else: a routable address in the settings file would put the whole
 // subnet's traffic through the user's egress on the strength of one string.
@@ -267,6 +276,22 @@ const listed = await fetch(`http://127.0.0.1:${forwardPort}/v1/models`, {
   headers: { authorization: `Bearer ${JSON.parse(fs.readFileSync(path.join(scratch, 'our-free-model', 'settings.json'), 'utf8')).forwardKey}` },
 })
 check('and the listener answers its own model list', listed.status, 200)
+// The listing already hides a model the gateway names but will not route. The
+// request path has to apply the same gate: naming it in a body used to bypass
+// the picker's verdict and dial upstream for an answer the probe already knew.
+const unroutedProbes = () => stub.requests.filter(row => row.body?.model === 'jev-1.13-free').length
+const jevBefore = unroutedProbes()
+const unrouted = await fetch(`http://127.0.0.1:${forwardPort}/v1/chat/completions`, {
+  method: 'POST',
+  headers: {
+    authorization: `Bearer ${JSON.parse(fs.readFileSync(path.join(scratch, 'our-free-model', 'settings.json'), 'utf8')).forwardKey}`,
+    'content-type': 'application/json',
+  },
+  body: JSON.stringify({ model: 'jev-1.13-free', messages: [{ role: 'user', content: 'hi' }] }),
+})
+check('the forward port refuses a model the picker hides', unrouted.status, 404)
+check('and says so in the answer', /not found/.test(await unrouted.text()), true)
+check('without dialling upstream for a verdict it already has', unroutedProbes(), jevBefore)
 await callRoute(api(), 'POST', '/api/our-free-model/settings', { forward: { enabled: false, host: '127.0.0.1', port: forwardPort } })
 
 // ── the fence as the mounted route actually applies it ───────────────────────
@@ -277,11 +302,55 @@ const hostile = await callRoute(api(), 'GET', '/api/our-free-model/summary', und
   { authorization: 'internal-api', host: 'rebind.example:3000' })
 check('a request naming a host that is not this machine is refused at the route', hostile.status, 403)
 check('while the same route answers the loopback one', (await callRoute(api(), 'GET', '/api/our-free-model/summary')).status, 200)
+check('the refusal log identifies the structural Host fence',
+  ctx.__logs.some(line => line.includes('settings API admission rejected status=403 source=structural reason=host-not-loopback')), true)
+
+// Desktop forwards to HTTP loopback without Origin/Fetch-Metadata and keeps its
+// custom-protocol Referer. Exercise both registered surfaces, not only trust.js.
+const desktopHeaders = { host: '127.0.0.1:3000', referer: 'dsh-app://app/' }
+check('the settings route accepts the desktop relay before connection appears',
+  (await callRoute(api(), 'GET', '/api/our-free-model/summary', undefined, desktopHeaders)).status, 200)
+const events = routes.find(route => route.kind === 'exact' && route.path === '/api/our-free-model/events')?.handler
+if (events === undefined) throw new Error('events route was not registered')
+const eventReq = Object.assign(new EventEmitter(), new FakeRequest('GET', '/api/our-free-model/events', undefined, desktopHeaders))
+let eventStatus = 0
+let eventBody = ''
+const eventRes = Object.assign(new EventEmitter(), {
+  writeHead(status) { eventStatus = status },
+  write(text) { eventBody += text },
+  end() {},
+})
+events(eventReq, eventRes)
+check('the events route accepts the desktop relay', eventStatus, 200)
+check('and sends the initial snapshot', eventBody.includes('event: hello'), true)
+eventRes.emit('close')
 
 ctx.__services.connection.admit = () => ({ rejection: 401 })
 ctx.__mountService('connection')
 check('and once the composition publishes its own admission, that is what decides',
   (await callRoute(api(), 'GET', '/api/our-free-model/summary')).status, 401)
+for (const status of [401, 403]) {
+  ctx.__services.connection.admit = () => ({ rejection: status })
+  check(`desktop JSON requests cannot bypass Host ${status}`,
+    (await callRoute(api(), 'GET', '/api/our-free-model/summary', undefined, desktopHeaders)).status, status)
+  check(`desktop events cannot bypass Host ${status}`,
+    (await callRoute(events, 'GET', '/api/our-free-model/events', undefined, desktopHeaders)).status, status)
+}
+ctx.__services.connection.admit = () => { throw new Error('exception-secret') }
+const sensitiveHeaders = {
+  ...desktopHeaders, cookie: 'cookie-secret', authorization: 'Bearer auth-secret',
+}
+const unavailable = await callRoute(api(), 'GET', '/api/our-free-model/summary?token=query-secret', undefined, sensitiveHeaders)
+check('a failed Host admission returns 503 rather than bypassing authentication', unavailable.status, 503)
+check('the JSON error does not mislabel a Host failure as forbidden', unavailable.json.error, 'admission unavailable')
+check('events report the same Host failure',
+  (await callRoute(events, 'GET', '/api/our-free-model/events?token=query-secret', undefined, sensitiveHeaders)).status, 503)
+check('both route logs identify the Host admission failure',
+  ['settings API', 'events'].every(surface => ctx.__logs.some(line =>
+    line.includes(`${surface} admission rejected status=503 source=connection reason=admission-error`))), true)
+check('admission logs contain no sensitive request or exception strings',
+  ctx.__logs.filter(line => line.includes('admission rejected'))
+    .every(line => !/cookie-secret|auth-secret|query-secret|exception-secret|rebind\.example|dsh-app:/.test(line)), true)
 ctx.__services.connection.admit = () => undefined
 
 // ── one probe round at a time ────────────────────────────────────────────────

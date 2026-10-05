@@ -33,7 +33,8 @@ import { buildCatalog, buildEacCatalog, isEacEntry, parseListing } from './src/c
 import { STATE, detectEgress, probeCatalog } from './src/probe.js'
 import { generateKey, startForwardServer, startLanRelay, toOpenAiUsage } from './src/forward.js'
 import { CODE, UpstreamError, getJson } from './src/http.js'
-import { fetchSealedListing } from './src/eac.js'
+import { outletLabel, readOutletSelection, startEgressRelay } from './src/egress.js'
+import { directFetch, fetchSealedListing } from './src/eac.js'
 import { unlockSealedLane } from './src/vault.js'
 import { mintRequestId, sessionForConversation } from './src/upstream.js'
 import { DEFAULT_LEVEL, budgetLadder } from './src/effort.js'
@@ -158,15 +159,24 @@ export function apply(ctx, config) {
   /** The optional LAN relay: a second door, with a key of its own. */
   let relay = null
   let relayError = ''
+  /** The optional egress outlet (subscription or single client), off by
+   *  default. Named `outlet*` so the `egress` IP/country snapshot stays clear. */
+  let outletRelay = null
+  let outletError = ''
+  /** Last reading of the outlet's own view of itself, cached for `/summary`. */
+  let outletNode = { node: '', delayMs: 0, at: 0 }
+  /** How long the last successful listing round took over the current path. */
+  let gatewayLatency = { ms: 0, at: 0 }
 
   // ── the co-paid lane ────────────────────────────────────────────────────────
   /**
    * The sealed lane is invisible until the host gate passes and the seal opens,
    * both re-checked per use. Its roster persists under `sealIds` in the catalog
-   * store so a desktop restart offline still shows what it served last, but a
-   * host the gate refuses never reads that list: `sealedCatalog` starts and
-   * stays empty, and nothing about the lane — no entry, no request, no error —
-   * is observable from an unapproved host.
+   * store so a desktop restart offline still shows what it served last. A host
+   * the gate refuses never reads that list — `sealedCatalog` starts and stays
+   * empty, and no entry, request, or error of the lane is observable — but the
+   * persisted list survives the refusal, and the refusal itself is logged, so
+   * an empty EAC group has a reason in the log instead of silence.
    */
   const profileNameOf = () => {
     const context = typeof ctx.get === 'function' ? ctx.get('profileContext') : undefined
@@ -176,6 +186,51 @@ export function apply(ctx, config) {
   let sealedCatalog = sealedCredentialOf() === null ? [] : buildEacCatalog(catalogStore.get().sealIds ?? [])
   const mergeCatalogs = () => { catalog = [...catalog, ...sealedCatalog.filter(row => !catalog.some(entry => entry.id === row.id))] }
   mergeCatalogs()
+
+  // ── the pool snapshot (settings-page gauge) ─────────────────────────────────
+  // The co-paid gateway publishes aggregate, non-sensitive numbers (provisioned
+  // capacity, live traffic) at `{mount}/pool`; this proxy exists so the browser
+  // never needs the gateway URL — the seal stays server-side. Thirty seconds
+  // of server-side cache keeps a settings page that re-mounts often from
+  // turning into a request flood, while staying fresh enough for the load
+  // verdict to mean something. A host without the lane — or a gateway that
+  // does not answer — throws a tagged reason, and the route answers 404 with
+  // that reason, which the client shows as a muted diagnostic line. The
+  // outbound hop rides directFetch, the lane's own node:http(s) transport: if
+  // global fetch is wrapped or broken in this composition, the lane still is.
+  const poolError = reason => Object.assign(new Error(`pool: ${reason}`), { code: 'POOL_UNAVAILABLE', reason })
+  // A snapshot this young still describes the same day; under load the panel
+  // shows it rather than blanking while the gateway is slow to answer.
+  const POOL_STALE_MS = 10 * 60_000
+  let poolCache = { at: 0, data: null }
+  async function fetchPoolSnapshot() {
+    if (poolCache.data !== null && Date.now() - poolCache.at < 30_000) return poolCache.data
+    const credential = sealedCredentialOf()
+    if (credential === null || credential.mode !== 'worker') throw poolError('no-lane')
+    const gatewayRoot = credential.base.replace(/\/v1\/?$/, '')
+    const controller = new AbortController()
+    // The gateway may be genuinely slow when it is saturated (that is what the
+    // verdict is about); twenty seconds is the patience this hop gets.
+    const timer = setTimeout(() => controller.abort(), 20_000)
+    timer.unref?.()
+    try {
+      const response = await directFetch(`${gatewayRoot}/pool`, { headers: { accept: 'application/json' }, signal: controller.signal })
+      if (!response.ok) throw poolError('gateway-status')
+      const data = await response.json()
+      // The gateway may answer a degraded snapshot: stars unreachable means
+      // pool/poolSource come back null/'unavailable' while the live counters
+      // stay real. That is still a valid snapshot — only the in-flight core
+      // is required, and the panel renders the rest as it finds it.
+      if (data?.ok !== true || !Number.isFinite(data.inflight)) throw poolError('malformed')
+      poolCache = { at: Date.now(), data }
+      return data
+    } catch (error) {
+      if (poolCache.data !== null && Date.now() - poolCache.at < POOL_STALE_MS) return poolCache.data
+      throw error?.code === 'POOL_UNAVAILABLE' ? error : poolError('unreachable')
+    } finally {
+      clearTimeout(timer)
+    }
+  }
 
   // ── push channel ────────────────────────────────────────────────────────────
   const push = createPushHub({ logger })
@@ -238,10 +293,15 @@ export function apply(ctx, config) {
   /** A turn refused for geography means the egress moved; re-classify promptly. */
   let reprobeTimer
   function scheduleReprobe() {
-    if (reprobeTimer !== undefined) return
+    if (disposed || reprobeTimer !== undefined) return
     reprobeTimer = setTimeout(() => {
       reprobeTimer = undefined
-      void refreshAvailability(true).catch(() => {})
+      // Teardown clears this handle, but the trigger comes from a turn that can
+      // land the instant after `disposed` was set; a forced round against
+      // disposed stores would be swallowed whole and still spend the quota.
+      if (disposed) return
+      void refreshAvailability(true)
+        .catch(error => logger.warn?.(`our-free-model: region reprobe failed (${error?.message ?? error})`))
     }, 4000)
     reprobeTimer.unref?.()
   }
@@ -289,7 +349,30 @@ export function apply(ctx, config) {
   })
 
   // ── catalog + availability ──────────────────────────────────────────────────
-  async function refreshCatalog({ probe = true, force = false } = {}) {
+  // One round at a time, coalesced: the boot refresh, a model discovery, and
+  // the refresh button all arrive together at startup, and each used to fetch
+  // the listing and probe the lane on its own. A forced round covers every
+  // waiter; one that still needs forcing (a reprobe inside the 429 backoff,
+  // where an unforced round deliberately skips the probe) runs its own after
+  // the shared round rather than inheriting its softer options.
+  let catalogRefresh = null
+  let catalogRefreshForced = false
+  async function refreshCatalog(opts) {
+    const { probe = true, force = false } = opts ?? {}
+    while (catalogRefresh !== null) {
+      const shared = catalogRefresh
+      const sharedForced = catalogRefreshForced
+      const value = await shared
+      if (!force || sharedForced) return value
+    }
+    const run = refreshCatalogOnce({ probe, force })
+    catalogRefresh = run
+    catalogRefreshForced = force
+    try { return await run } finally {
+      if (catalogRefresh === run) { catalogRefresh = null; catalogRefreshForced = false }
+    }
+  }
+  async function refreshCatalogOnce({ probe, force }) {
     let ids = []
     try {
       ids = parseListing(await fetchListing())
@@ -319,12 +402,18 @@ export function apply(ctx, config) {
    * persisted ids are dropped — a picker full of models the relay now refuses
    * is worse than an empty group with the failure in the log. Every log line
    * carries the failure class only, never the endpoint or the credential.
+   *
+   * A host the gate refuses is different: the lane was never open here, so
+   * nothing this install did was wrong, and the persisted ids belong to a
+   * machine that may be back on the supported host tomorrow. They stay, and
+   * the refusal is logged — this branch used to wipe the cache in silence,
+   * which made every "the EAC models are gone" report undiscoverable.
    */
   async function refreshSealedRoster() {
     const credential = sealedCredentialOf()
     if (credential === null) {
       sealedCatalog = []
-      catalogStore.update({ sealIds: [] })
+      logger.warn?.('our-free-model: the sealed lane is not available on this host; its models stay hidden')
       return
     }
     try {
@@ -348,11 +437,17 @@ export function apply(ctx, config) {
     // Read straight from the listing path rather than the probe helper: a listing
     // needs no session identity, and a failure should be a plain throw. Through
     // `getJson` so the base URL stays the one override every other request uses.
-    return await getJson('/zen/v1/models', {
+    const started = Date.now()
+    const listing = await getJson('/zen/v1/models', {
       session: sessionForConversation('catalog:our-free-model'),
       requestId: mintRequestId(),
       attributionUserAgent,
     })
+    // The one number that answers "how far away is opencode right now": the
+    // listing is the cheapest call that proves the whole path, and it goes
+    // through `egressFetch` like every other gateway request.
+    gatewayLatency = { ms: Date.now() - started, at: Date.now() }
+    return listing
   }
 
   async function runProbeRound() {
@@ -422,9 +517,10 @@ export function apply(ctx, config) {
   }
 
 
+  /** Returns whether the exit could actually be read, not just whether it moved. */
   async function watchEgress() {
     const seen = await detectEgress()
-    if (seen === undefined) return
+    if (seen === undefined) return false
     const previous = availability.get().egress
     const changed = previous === null || previous === undefined
       || previous.ip !== seen.ip || (seen.country !== undefined && previous.country !== seen.country)
@@ -435,6 +531,40 @@ export function apply(ctx, config) {
       logger.info?.(`our-free-model: egress changed to ${seen.ip}${seen.country ? ` (${seen.country})` : ''}; re-probing availability`)
       await refreshAvailability(true)
     }
+    return true
+  }
+
+  /**
+   * A freshly started outlet needs a moment before its nodes carry traffic: the
+   * first read comes back empty, and a re-probe fired on that cold path would
+   * record "unavailable" for models the new exit would have unlocked. Retry a
+   * few times and let the re-probe run only once the exit answers.
+   */
+  async function settleOutletWatch() {
+    let lastError
+    for (let attempt = 0; attempt < 4; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, attempt === 0 ? 2500 : 5000))
+      if (disposed) return
+      try {
+        if (await watchEgress()) {
+          // The exit answers, but url-test may not have ranked a node yet: read
+          // the selection now, and once more a beat later so the settings page
+          // does not sit on an empty node until the next periodic tick.
+          await readOutletStatus().catch(() => {})
+          const later = setTimeout(() => {
+            if (!disposed) void readOutletStatus().catch(() => {})
+          }, 5000)
+          later.unref?.()
+          return
+        }
+      } catch (error) {
+        lastError = error
+      }
+    }
+    logger.warn?.(
+      `our-free-model: egress changed but the new exit never answered; leaving verdicts alone`
+      + (lastError ? ` (${lastError?.message ?? lastError})` : ''),
+    )
   }
 
   // ── forward listener ────────────────────────────────────────────────────────
@@ -489,6 +619,7 @@ export function apply(ctx, config) {
         complete: (request, onChunk) => runForwarded(request, onChunk),
         modelRows: () => publicModelRows(),
         log: message => logger.warn?.(`our-free-model forward: ${message}`),
+        onTrace: event => logger.info?.(`our-free-model request: ${JSON.stringify(event)}`),
       })
       forwardError = ''
       // The requested port is somebody else's for good — a `netsh interface
@@ -553,7 +684,14 @@ export function apply(ctx, config) {
    * lives, and toggling the relay must not close and re-bind the local port
    * under a request that is already in flight on it.
    */
+  let relaySyncInFlight = null
   async function syncRelay() {
+    while (relaySyncInFlight !== null) await relaySyncInFlight.catch(() => {})
+    const run = syncRelayOnce()
+    relaySyncInFlight = run
+    try { await run } finally { if (relaySyncInFlight === run) relaySyncInFlight = null }
+  }
+  async function syncRelayOnce() {
     const desired = settings.get().forward ?? {}
     const lan = desired.lan ?? {}
     const wanted = lan.enabled === true
@@ -597,16 +735,158 @@ export function apply(ctx, config) {
           }
         },
         log: message => logger.warn?.(`our-free-model lan relay: ${message}`),
+        onTrace: event => logger.info?.(`our-free-model request: ${JSON.stringify(event)}`),
       })
       relayError = ''
       // The port that was actually bound goes back into the settings, so the
-      // address the page shows is the address that answers.
-      settings.update({ forward: { ...desired, lan: { ...lan, port: relay.port } } })
+      // address the page shows is the address that answers. Out of the CURRENT
+      // settings — not the entry-time snapshot: an overlapped save during the
+      // bind would otherwise be rolled back to the values this run started with.
+      const settledForward = settings.get().forward ?? {}
+      settings.update({ forward: { ...settledForward, lan: { ...(settledForward.lan ?? {}), port: relay.port } } })
       settings.flush()
     } catch (error) {
       relayError = String(error?.message ?? error)
       logger.warn?.(`our-free-model: LAN relay could not start (${relayError})`)
     }
+  }
+
+  // ── egress outlet ───────────────────────────────────────────────────────────
+  /** One gateway round trip at a time; the panel polls, the throttle decides. */
+  let latencyMeasureInFlight = null
+  /**
+   * Which node the outlet is carrying traffic on, and what it costs to reach the
+   * gateway through it. Purely informational: every failure is a missing reading,
+   * never an error, because the outlet itself may be perfectly healthy while the
+   * controller call that describes it is not.
+   */
+  /**
+   * The settings page asks "how long does opencode take to answer right now", and
+   * the honest answer is a real round trip through the outlet — not the age of the
+   * last catalog refresh. Re-reading the listing is the cheapest call that proves
+   * the whole path (it is the same request the catalog uses, and free), so it is
+   * reused here, throttled so a panel left open cannot turn into a loop.
+   */
+  async function measureGatewayLatency() {
+    if (gatewayLatency.at !== 0 && Date.now() - gatewayLatency.at < 60_000) return
+    if (latencyMeasureInFlight !== null) return await latencyMeasureInFlight.catch(() => {})
+    const run = fetchListing()
+      .then(() => {})
+      .catch(error => {
+        logger.debug?.(`our-free-model: gateway latency reading failed (${error?.message ?? error})`)
+      })
+    latencyMeasureInFlight = run
+    try { await run } finally { if (latencyMeasureInFlight === run) latencyMeasureInFlight = null }
+  }
+
+  async function readOutletStatus() {
+    const relay = outletRelay
+    if (relay === null) {
+      outletNode = { node: '', delayMs: 0, at: 0 }
+      return { node: '', nodeDelayMs: 0, nodeAt: 0, latencyMs: 0, latencyAt: 0 }
+    }
+    await measureGatewayLatency().catch(() => {})
+    const selection = await readOutletSelection(relay).catch(() => null)
+    // A settled read is cached for `/summary`, which cannot await a round trip.
+    if (outletRelay === relay) {
+      outletNode = { node: selection?.node ?? '', delayMs: selection?.delayMs ?? 0, at: Date.now() }
+    }
+    return {
+      node: selection?.node ?? '',
+      nodeDelayMs: selection?.delayMs ?? 0,
+      nodeAt: Date.now(),
+      latencyMs: gatewayLatency.ms,
+      latencyAt: gatewayLatency.at,
+    }
+  }
+  // Same serialisation gate as the two listeners above: the boot chain and every
+  // settings POST call this, and overlapping runs would leak a spawned mihomo
+  // (the loser overwrites `outletRelay` while the winner's child still runs).
+  let outletSyncInFlight = null
+  /** What the currently running outlet was started with — restart on change. */
+  let outletFingerprint = ''
+  async function syncEgress() {
+    while (outletSyncInFlight !== null) await outletSyncInFlight.catch(() => {})
+    const run = syncEgressOnce()
+    outletSyncInFlight = run
+    try { await run } finally { if (outletSyncInFlight === run) outletSyncInFlight = null }
+  }
+  async function syncEgressOnce() {
+    const desired = settings.get().egress ?? {}
+    const wanted = desired.enabled === true
+    const mode = desired.mode === 'client' ? 'client' : 'subscription'
+    const url = String(desired.url ?? '').trim()
+    const mihomoPath = String(desired.mihomoPath ?? '').trim()
+    const fingerprint = `${mode}\n${url}\n${mihomoPath}`
+    if (outletRelay !== null && wanted && outletFingerprint === fingerprint && !outletRelay.dead) return
+    if (outletRelay === null && !wanted) return
+    if (outletRelay !== null) {
+      const closing = outletRelay
+      outletRelay = null
+      outletFingerprint = ''
+      await closing.close().catch(() => {})
+      // The way out changed under every fetch: re-detect the exit so the pill and
+      // the model verdicts describe the path the next request actually takes.
+      void settleOutletWatch()
+    }
+    if (!wanted) {
+      outletError = ''
+      return
+    }
+    if (url === '') {
+      outletError = 'the outlet needs a subscription or proxy URL'
+      logger.warn?.(`our-free-model: egress outlet not started (${outletError})`)
+      return
+    }
+    try {
+      outletRelay = await startEgressRelay({
+        config: () => {
+          const current = settings.get().egress ?? {}
+          return {
+            mode: current.mode === 'client' ? 'client' : 'subscription',
+            url: String(current.url ?? '').trim(),
+            mihomoPath: String(current.mihomoPath ?? '').trim(),
+          }
+        },
+        dataDir,
+        log: message => logger.info?.(`our-free-model egress: ${message}`),
+        onDead: scheduleOutletRestart,
+      })
+      outletFingerprint = fingerprint
+      outletError = ''
+      outletUpSince = Date.now()
+      logger.info?.(`our-free-model: egress outlet up (${outletLabel(url)} via ${mode})`)
+      // Same as the close path: the exit IP, its country and the region-gated
+      // verdicts all moved with the outlet, so settle them now instead of at the
+      // next periodic watch.
+      void settleOutletWatch()
+    } catch (error) {
+      outletError = String(error?.message ?? error)
+      logger.warn?.(`our-free-model: egress outlet could not start (${outletError})`)
+    }
+  }
+
+  // A managed mihomo that dies mid-run used to leave the outlet bricked until
+  // the user touched the settings page: the relay stays up but its dial port is
+  // gone, so every upstream turn fails. syncEgressOnce already restarts a dead
+  // relay with an unchanged fingerprint — this only calls it, with a backoff so
+  // a mihomo that dies at boot cannot spin into a start/exit loop. A run that
+  // lasted two minutes counts as healthy and resets the ladder.
+  const OUTLET_STABLE_MS = 120_000
+  let outletUpSince = 0
+  let outletRestartAttempts = 0
+  let outletRestartTimer = null
+  function scheduleOutletRestart() {
+    if (outletRestartTimer !== null) return
+    if (Date.now() - outletUpSince >= OUTLET_STABLE_MS) outletRestartAttempts = 0
+    const delay = Math.min(15_000 * 2 ** outletRestartAttempts, 600_000)
+    outletRestartAttempts += 1
+    logger.warn?.(`our-free-model: egress outlet went down; restarting in ${Math.round(delay / 1000)}s (attempt ${outletRestartAttempts})`)
+    outletRestartTimer = setTimeout(() => {
+      outletRestartTimer = null
+      void syncEgress().catch(() => {})
+    }, delay)
+    outletRestartTimer.unref?.()
   }
 
   /**
@@ -620,8 +900,10 @@ export function apply(ctx, config) {
     const entry = catalog.find(candidate => candidate.id === request.model)
     // OpenAI semantics: a model the roster does not carry is the caller's
     // mistake (404 model_not_found), not the gateway's — a 502 here read as
-    // "the plugin is broken" to every client that inspects the status.
-    if (entry === undefined) throw httpError(404, `model "${request.model}" not found`)
+    // "the plugin is broken" to every client that inspects the status. The same
+    // gate as `/v1/models` below: a model the picker hides for having no route
+    // must not become dialable just by naming it in a request body.
+    if (entry === undefined || !routableModelIds().has(entry.id)) throw httpError(404, `model "${request.model}" not found`)
     const openAi = request.openAi ?? {}
     const messages = fromOpenAiMessages(openAi, request.responses === true)
     // The caller's defs reach the adapter in the harness's own flat spelling,
@@ -661,9 +943,15 @@ export function apply(ctx, config) {
     return outcome
   }
 
-  function publicModelRows() {
+  /** What the picker selects and the forward port may dial — one definition, two surfaces. */
+  function routableModelIds() {
     const membership = new Set(state().membership[ROUTE_MAIN] ?? [])
     if (settings.get().exposeRegionModels !== false) for (const id of state().membership[ROUTE_REGION] ?? []) membership.add(id)
+    return membership
+  }
+
+  function publicModelRows() {
+    const membership = routableModelIds()
     return catalog
       .filter(entry => membership.has(entry.id))
       .map(entry => ({
@@ -755,9 +1043,15 @@ export function apply(ctx, config) {
       return current === undefined ? undefined : (req => current.admit(req))
     },
   }
+  const logAdmissionRejection = surface => ({ status, source, reason }) => {
+    // Fixed fields only: headers, request URLs and admission errors may contain
+    // credentials. JSON API and SSE must report the same admission boundary.
+    logger.warn?.(`our-free-model: ${surface} admission rejected status=${status} source=${source} reason=${reason}`)
+  }
   const api = createApiRoutes({
     settings, stats, availability, catalog: () => catalog, state,
-    refreshCatalog, refreshAvailability, syncForward, syncRelay,
+    refreshCatalog, refreshAvailability, syncForward, syncRelay, syncEgress,
+    pool: fetchPoolSnapshot,
     forwardInfo: () => ({
       running: forward !== null,
       port: forward?.port ?? 0,
@@ -772,6 +1066,29 @@ export function apply(ctx, config) {
         addresses: lanAddresses(),
       },
     }),
+    // The subscription URL is a credential: only its masked label ever leaves
+    // this process. `active` mirrors what egressFetch is actually doing right
+    // now (direct until the relay finishes starting, direct again once closed).
+    egressInfo: () => ({
+      running: outletRelay !== null,
+      active: outletRelay !== null,
+      mode: outletRelay?.mode ?? '',
+      outlet: outletRelay === null ? '' : outletLabel(outletRelay.url ?? ''),
+      // Cached readings: `/summary` is synchronous, so the live controller call
+      // lives in `outletStatus` below and only the last answer is echoed here.
+      node: outletNode.node,
+      nodeDelayMs: outletNode.delayMs,
+      nodeAt: outletNode.at,
+      latencyMs: gatewayLatency.ms,
+      latencyAt: gatewayLatency.at,
+      // `dead` is the managed mihomo dying after startup — surfaced through the
+      // same field so the settings page shows why traffic fell back to direct.
+      error: outletError !== '' ? outletError : (outletRelay?.dead ?? ''),
+    }),
+    // The settings page polls this while the outlet is on: which node url-test is
+    // carrying traffic on is mihomo's own state, and it changes without anything
+    // else in this process moving.
+    outletStatus: () => readOutletStatus(),
     rotateKey: () => {
       const minted = generateKey()
       settings.update({ forwardKey: minted })
@@ -865,6 +1182,7 @@ export function apply(ctx, config) {
     managedDistribution: managed,
     push,
     connection: fenceConnection,
+    onAdmissionRejection: logAdmissionRejection('settings API'),
     logger,
   })
 
@@ -890,10 +1208,10 @@ export function apply(ctx, config) {
 
   /** Adopt one request as a live push stream, after the trust fence. */
   function eventsRoute(req, res) {
-    const rejection = rejectionFor(req, fenceConnection)
+    const rejection = rejectionFor(req, fenceConnection, logAdmissionRejection('events'))
     if (rejection !== undefined) {
       res.writeHead(rejection, { 'content-type': 'text/plain; charset=utf-8' })
-      res.end(rejection === 401 ? 'unauthorized' : 'forbidden')
+      res.end(rejection === 401 ? 'unauthorized' : rejection === 503 ? 'admission unavailable' : 'forbidden')
       return
     }
     push.attach(req, res, helloPayload())
@@ -916,6 +1234,7 @@ export function apply(ctx, config) {
   ctx.effect(() => () => {
     void forward?.close().catch(() => {})
     void relay?.close().catch(() => {})
+    void outletRelay?.close().catch(() => {})
   }, 'our-free-model: forward listener')
 
   ctx.effect(() => () => { registration() }, 'our-free-model: adapter routes')
@@ -933,9 +1252,20 @@ export function apply(ctx, config) {
   ctx.effect(() => {
     void (async () => {
       attributionUserAgent = await resolveAttributionUserAgent(logger)
+      if (disposed) return
+      // First: the catalog refresh and its probe round below go through
+      // egressFetch, so the outlet must be carrying traffic before they run.
+      await syncEgress()
+      if (disposed) return
       await refreshCatalog({ probe: true, force: true })
+      // Every await here is a chance for teardown to have run underneath this
+      // boot: a resumed refresh would start listeners the disposer already
+      // closed and force a probe round against stores it disposed.
+      if (disposed) return
       await syncForward()
+      if (disposed) return
       await syncRelay()
+      if (disposed) return
       syncWatcher()
       emitTopology()
       push.emit('hello', helloPayload())
@@ -974,24 +1304,27 @@ export function apply(ctx, config) {
    * boot, so a model that throttled, recovered, or moved behind the region gate
    * would keep the picker position it was first given.
    */
+  // `ms` may be a function: the period is re-read on every re-arm, so an
+  // interval changed on the settings page takes effect from the next cycle
+  // instead of echoing a number the running timer will never observe.
   function every(task, ms) {
+    const period = () => typeof ms === 'function' ? ms() : ms
     let handle = setTimeout(function tick() {
       if (disposed) return
       task()
-      handle = setTimeout(tick, ms)
+      handle = setTimeout(tick, period())
       handle.unref?.()
-    }, ms)
+    }, period())
     handle.unref?.()
     ctx.effect(() => () => clearTimeout(handle), 'our-free-model: interval')
   }
 
-  const feedMinutes = positiveOr(settings.get().feedPollMinutes, 30, 5)
   if (!managed) {
     every(() => {
       void feed.poll()
       const hours = settings.get().updateCheckHours ?? 6
       if (hours > 0) void updater.check().then(() => pushUpdate(false)).catch(() => {})
-    }, feedMinutes * 60_000)
+    }, () => positiveOr(settings.get().feedPollMinutes, 30, 5) * 60_000)
   }
   // The probe period is in minutes, and one minute is the floor — a value of 0 or
   // a negative one would otherwise spin. This used to read `Math.max(60, …)`,
@@ -1002,9 +1335,23 @@ export function apply(ctx, config) {
       await watchEgress()
       await refreshCatalog({ probe: true })
     })().catch(error => logger.warn?.(`our-free-model: periodic refresh failed (${error?.message ?? error})`))
-  }, positiveOr(settings.get().probeIntervalMinutes, 15, 1) * 60_000)
+  }, () => positiveOr(settings.get().probeIntervalMinutes, 15, 1) * 60_000)
+  // A failing egress watch means the network is down, which is worth one line —
+  // and only the first of a streak, or a dead link would write every two minutes
+  // until the next restart. A success resets the flag for the next outage.
+  let egressWarned = false
   every(() => {
-    void watchEgress().catch(() => {})
+    void watchEgress()
+      .then(() => {
+        egressWarned = false
+        // url-test re-ranks on its own 5-minute cycle; the node shown on the
+        // settings page follows the same cadence as the exit reading.
+        void readOutletStatus().catch(() => {})
+      })
+      .catch(error => {
+        if (!egressWarned) logger.warn?.(`our-free-model: egress watch failed (${error?.message ?? error})`)
+        egressWarned = true
+      })
   }, 120_000)
   // The first update check waits for the boot refresh to settle, then runs once
   // even when the periodic poll is disabled (hours === 0 means opt out fully).
@@ -1271,18 +1618,23 @@ function foldForwardOutcome(outcome, chunk) {
  * prefix outranks `/api` in webServer's longest-prefix dispatch, so without
  * this fence these routes would answer callers the app itself would refuse.
  */
+/** The fixed failure classes the pool proxy may surface to the client. */
+const POOL_REASONS = new Set(['no-lane', 'gateway-status', 'malformed', 'unreachable'])
+
 function createApiRoutes(deps) {
   return async function handler(req, res) {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const routePath = url.pathname.replace(/^\/api\/our-free-model/, '').replace(/\/+$/, '') || '/'
     const method = String(req.method ?? 'GET').toUpperCase()
-    const rejection = rejectionFor(req, deps.connection)
+    const rejection = rejectionFor(req, deps.connection, deps.onAdmissionRejection)
     const send = (status, payload) => {
       const body = JSON.stringify(payload)
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
       res.end(body)
     }
-    if (rejection !== undefined) return send(rejection, { error: rejection === 401 ? 'unauthorized' : 'forbidden' })
+    if (rejection !== undefined) return send(rejection, {
+      error: rejection === 401 ? 'unauthorized' : rejection === 503 ? 'admission unavailable' : 'forbidden',
+    })
     try {
       if (method === 'GET' && routePath === '/summary') {
         return send(200, buildSummary(deps))
@@ -1290,8 +1642,18 @@ function createApiRoutes(deps) {
       if (method === 'GET' && routePath === '/stats') {
         return send(200, buildStats(deps.stats.get(), deps.catalog()))
       }
+      if (method === 'GET' && routePath === '/outlet') {
+        return send(200, await deps.outletStatus())
+      }
       if (method === 'GET' && routePath === '/meta') {
         return send(200, { ...deps.meta(), feed: { fetchedAt: deps.announcements.view().fetchedAt, source: deps.announcements.view().source, error: deps.announcements.view().error }, update: deps.update.status() })
+      }
+      if (method === 'GET' && routePath === '/pool') {
+        try { return send(200, await deps.pool()) } catch (error) {
+          const reason = POOL_REASONS.has(error?.reason) ? error.reason : 'unreachable'
+          deps.logger?.warn?.(`our-free-model: pool snapshot unavailable (${reason})`)
+          return send(404, { error: `pool unavailable (${reason})` })
+        }
       }
       if (method === 'GET' && routePath === '/announcement') {
         // A managed install also stands down the owner's onboarding copy: the
@@ -1300,7 +1662,10 @@ function createApiRoutes(deps) {
         return send(200, { version: ANNOUNCEMENT_VERSION, acknowledged })
       }
       if (method === 'POST' && routePath === '/announcement/ack') {
-        deps.settings.update({ announcementAck: String(url.searchParams.get('version') ?? ANNOUNCEMENT_VERSION) })
+        // Bounded like every other write to this file: the query string is
+        // caller-controlled, and the comparison downstream only ever matches a
+        // version id — nothing needs the whole string.
+        deps.settings.update({ announcementAck: String(url.searchParams.get('version') ?? ANNOUNCEMENT_VERSION).slice(0, 64) })
         deps.settings.flush()
         return send(200, { ok: true })
       }
@@ -1384,16 +1749,30 @@ function createApiRoutes(deps) {
           }
           next.forward = forward
         }
+        if (patch.egress !== undefined) {
+          const egressPatch = pick(patch.egress, ['enabled', 'mode', 'url', 'mihomoPath'])
+          if (egressPatch.mode !== undefined && egressPatch.mode !== 'subscription' && egressPatch.mode !== 'client') {
+            return send(400, { error: 'the egress mode is "subscription" or "client"' })
+          }
+          for (const key of ['url', 'mihomoPath']) {
+            if (egressPatch[key] !== undefined) {
+              const value = String(egressPatch[key]).trim()
+              if (value.length > 2048) return send(400, { error: `the egress ${key} is too long` })
+              egressPatch[key] = value
+            }
+          }
+          const egress = { ...(current.egress ?? {}), ...egressPatch }
+          if (egress.enabled === true && String(egress.url ?? '') === '') {
+            return send(400, { error: 'the outlet needs a subscription or proxy URL' })
+          }
+          next.egress = egress
+        }
         deps.settings.update(next)
         deps.settings.flush()
         await deps.syncForward()
         await deps.syncRelay()
-        if (patch.probeIntervalMinutes !== undefined || patch.feedPollMinutes !== undefined) {
-          // Poll periods live in fiber effects; the next load picks a change up,
-          // so surface that rather than pretending it hot-applied.
-          deps.logger.info?.('our-free-model: poll interval change applies on the next load')
-        }
-        return send(200, { ok: true, settings: publicSettings(deps.settings.get(), deps.forwardInfo()) })
+        await deps.syncEgress()
+        return send(200, { ok: true, settings: publicSettings(deps.settings.get(), deps.forwardInfo(), deps.egressInfo()) })
       }
       if (method === 'POST' && routePath === '/refresh') {
         await deps.refreshCatalog({ probe: true, force: true })
@@ -1414,6 +1793,12 @@ function createApiRoutes(deps) {
       }
       if (method === 'POST' && routePath === '/forward/lan/rotate') {
         return send(200, { key: deps.rotateLanKey() })
+      }
+      // The subscription/proxy URL is a credential, so it lives outside every
+      // routine payload and leaves the process only when the settings page asks
+      // for it — the same shape as the forward keys above.
+      if (method === 'GET' && routePath === '/egress/url') {
+        return send(200, { url: deps.settings.get().egress?.url ?? '' })
       }
       if (method === 'POST' && routePath === '/bench') {
         const body = await readJson(req)
@@ -1463,7 +1848,7 @@ async function readJson(req) {
   }
 }
 
-function publicSettings(settings, forwardInfo) {
+function publicSettings(settings, forwardInfo, egressInfo) {
   return {
     enabled: settings.enabled !== false,
     exposeRegionModels: settings.exposeRegionModels !== false,
@@ -1491,6 +1876,27 @@ function publicSettings(settings, forwardInfo) {
         error: forwardInfo.lan?.error ?? '',
         addresses: forwardInfo.lan?.addresses ?? [],
       },
+    },
+    // A subscription link is not an endpoint, it is a bearer credential: the
+    // path of the URL *is* the token, which is why it is handled like the
+    // forward keys and not like `feedUrl`. Stored as given, but never echoed —
+    // `urlLabel` is the masked host for the panel, `hasUrl` says whether one is
+    // set at all, and the value itself is served only by `GET /egress/url`, on
+    // the settings page's own ask (see src/egress.js `outletLabel`).
+    egress: {
+      ...pick(settings.egress ?? {}, ['enabled', 'mode', 'mihomoPath']),
+      hasUrl: String(settings.egress?.url ?? '') !== '',
+      urlLabel: outletLabel(settings.egress?.url ?? ''),
+      outlet: egressInfo?.outlet ?? '',
+      running: egressInfo?.running === true,
+      active: egressInfo?.active === true,
+      // The node url-test is carrying traffic on, its last measured delay, and
+      // how long reaching the gateway took. All three are readings, not state.
+      node: egressInfo?.node ?? '',
+      nodeDelayMs: egressInfo?.nodeDelayMs ?? 0,
+      latencyMs: egressInfo?.latencyMs ?? 0,
+      latencyAt: egressInfo?.latencyAt ?? 0,
+      error: egressInfo?.error ?? '',
     },
   }
 }
@@ -1521,8 +1927,9 @@ function buildSummary(deps) {
       route: (state.membership[ROUTE_MAIN] ?? []).includes(entry.id) ? ROUTE_MAIN
         : (state.membership[ROUTE_REGION] ?? []).includes(entry.id) ? ROUTE_REGION : null,
     })),
-    settings: publicSettings(deps.settings.get(), forwardInfo),
+    settings: publicSettings(deps.settings.get(), forwardInfo, deps.egressInfo()),
     egress: forwardInfo.egress ?? snapshot.egress ?? null,
+    outlet: deps.egressInfo(),
     probedAt: snapshot.at ?? 0,
     announcementVersion: ANNOUNCEMENT_VERSION,
     version: deps.meta().version,

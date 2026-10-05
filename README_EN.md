@@ -38,13 +38,12 @@
 - **The upstream is named** — one source, nothing else: OpenCode's Zen gateway at `https://opencode.ai`, with no third party relaying your traffic. Who serves your requests, and where your data goes, is spelled out in [Where the models come from](#where-the-models-come-from).
 - **A roster that tracks upstream** — model set, context length and capabilities are re-fetched on every refresh rather than frozen into the plugin.
 - **The picker offers only what actually answers** — a model the upstream listing names but the gateway refuses to route outright (`Model is unavailable`, a 404 for that id) leaves the dropdown and stays visible in the settings page with its refusal recorded. Everything that is *not* a statement about the model keeps its model reachable: a 5xx from the gateway, a 429 quota window, a timeout or a dropped connection. Region-gated ones move to their own `region-limited` group. If a whole round refuses everything, nothing is hidden: the picker never goes empty.
-- **Non-chat models never enter the picker** — `jev-1.13-free` is Zen's System One structured-decision model: instead of generating text it scores a `state` against typed questions, and it is served at `/zen/v1/systemone`. Sending it to `/chat/completions` answers `500 Internal server error` every time (measured on this egress 2026-10-01, while the same id on `/systemone` answers 200 with a real answer). Such ids are filtered out at the **catalogue** stage by `NON_CHAT_MODELS`, so neither the picker nor the settings page shows them — they are not *unavailable*, they are a *different kind of thing*, and calling them unavailable would be the lie. Install the `dsh-jev-decide` tool plugin to use them.
 - **Announcement center with live push** — the repository owner edits one JSON file and pushes; every installation receives it within one poll cycle. Bodies are HTML rendered through a strict allowlist; `urgent` items open a full-screen modal; optional OS-level notifications.
 - **In-app upgrades** — one click in the settings page: download → SHA-256 verification → backup → atomic replace → read-back verification → hot reload, with automatic rollback if any step fails.
 - **Hot reload** — upgrades and code changes take effect immediately, no app restart; also available as a manual button and an optional file watcher.
 - **Region-aware, per egress** — models gated by geography are separated into their own `region-limited` group instead of failing mid-turn. Switch your network exit and the next probe reclassifies them automatically.
 - **The body decides what it is, not the header** — under load this gateway answers 200 with a JSON `Content-Type` over a perfectly ordinary SSE frame stream. The plugin sniffs the first bytes and replays them into the stream, so the turn keeps streaming instead of being thrown away — and a working model is never demoted to `unavailable` because one header lied.
-- **Thinking effort that actually binds — a budget plus real `reasoning_effort`.** `Light / Balanced / Deep` first map to hard output-token budgets of 2 048 / 8 192 / the model's full capacity, recorded per call; a model that cannot switch thinking off (MiMo V2.6 among them) gets the whole ladder doubled to 4 096 / 16 384 / capacity, because there thinking and the visible answer compete for the one ceiling, and every model card in the settings page prints the number it will send. On top of that, for the six **effort-aware** models (fledge, space-bunny, MiMo V2.5/V2.6, Nemotron 3-ultra/3.5) the same rung also sends a real `reasoning_effort` upstream (`light`→`low`, `balanced`→`high`, `deep`→`max`), which is live-verified to work: fledge's visible output grows with the rung and it accepts only low/high/max (anything else is a 400), and MiMo/Nemotron's `none` genuinely switches thinking off. Non-effort-aware models (longcat, big-pickle, …) get the budget only, no effort string (their reasoning tokens are flat across rungs). See [Why a budget, and also `reasoning_effort`](#why-a-budget-and-also-reasoning_effort).
+- **Thinking effort that actually binds** — `Light / Balanced / Deep` map to output-token budgets of 2 048 / 8 192 / the model's full capacity, and are recorded per call. A model that cannot switch thinking off (MiMo V2.6 among them) gets the whole ladder doubled to 4 096 / 16 384 / capacity, because there thinking and the visible answer compete for the one ceiling; every model card in the settings page prints the number it will actually send. This is not a `reasoning_effort` string thrown at an endpoint that ignores it (see [Why a budget](#why-a-budget-and-not-reasoning_effort)).
 - **Works without a browser UI** — only `llm` is a hard dependency, so the plugin activates on a headless composition such as dsh-tui and still serves its models. The dashboard half lives on its own fiber and mounts itself when `webServer` appears, so a composition that loads plugins before its HTTP server exists still gets its settings page. Availability probing and the background loops run on plain timers.
 - **Usage dashboard, local only** — token heatmap, cumulative curve by total or per model, output speed and time-to-first-token sampled per call. Nothing is uploaded.
 - **OpenAI-compatible forward port** — expose these models to any other local tool through a base URL plus a generated API key.
@@ -101,8 +100,8 @@ create a junction.** Use the in-app plugin manager, or place a real directory.
 To install manually as a real directory, in `<DSH_HOME>/profiles/<profile>/`:
 
 1. Copy the published files into `node_modules/dsh-our-free-model/`
-   (`index.js`, `client.js`, `src/`, `locale/`, `icon.svg`, `cordis.patch.yml`, `package.json`)
-2. Add `"dsh-our-free-model": "1.1.2"` to `dependencies` — a version spec, not `link:`
+   (`index.js`, `client.js`, `adapter/`, `src/`, `locale/`, `icon.svg`, `cordis.patch.yml`, `package.json` — do not skip `adapter/`: `index.js` imports it on the first line)
+2. Add `"dsh-our-free-model": "1.4.4"` to `dependencies` — that number **tracks the repo's `package.json` `version`** (bump it together; 1.4.4 as of this line), never copy a stale one, and a version spec, not `link:`
 3. Append `"dsh-our-free-model"` to `dsh.profile.bundles`
 
 > Do **not** also add an entry to `cordis.patch.yml`. A bundle referenced from
@@ -180,6 +179,87 @@ POST /v1/chat/completions     streaming and non-streaming
 POST /v1/responses
 ```
 
+If another program holds the port, the listener does not die: it retries the same
+port for a few rounds (a listener that just closed, or a portproxy rule that was
+just removed, frees its port within a few hundred milliseconds), then walks to the
+next free port and says so on the settings page — *requested 18899 is not available,
+listening on 18900* — and the port written back into the settings is the real one.
+On Windows the most common owner is a `netsh interface portproxy` rule (served by IP
+Helper): its listener on `0.0.0.0` makes the loopback bind fail with `EACCES` rather
+than `EADDRINUSE`. `netsh interface portproxy show all` lists the rules and
+`netsh interface portproxy reset` clears them.
+
+The forward endpoint streams in full: besides the `data:` frames, a lane that is
+thinking gets periodic SSE comment frames (a `:` line), so a client's idle
+timeout cannot read "the upstream is still thinking" as "the socket is dead".
+Thinking is recognised under `reasoning`, `reasoning_content` and
+`reasoning_text` — a gateway that repeats one thought under two of them is
+counted once — and the `reasoning_details` array as well. A model whose thinking
+never streams upstream still sends no reasoning frames here; see
+[Known limitations](#known-limitations).
+
+**Serve other devices on your network.** The same panel carries a *Network
+access* section. It is off by default; switched on, the relay binds a routable
+address (`0.0.0.0` by default) and demands **a key of its own** — separate from
+the local key, so a leak on either side costs a rotation on that side only and
+the tools already wired to the local port never notice. The relay re-issues to
+the local listener, so the model roster, streaming and error semantics are the
+same ones the local port serves. A port of `0` means "pick one" (18899 is often
+already taken on a machine that runs something else); the panel then shows the
+port and the network address it settled on. While it is on, anyone who can reach
+this machine can spend its free quota with that key — enable it only on a
+network you trust, and narrow the sources with a firewall if you can.
+
+**Send requests through a proxy outlet.** `Settings → Our Free Model → Egress
+proxy`. Optional and off by default — with it off, requests go direct. Two modes:
+
+- **Subscription mode**: paste a Clash/V2Ray subscription URL; the plugin spawns
+  mihomo locally (auto-detected — e.g. Clash Verge's `verge-mihomo.exe` — or set
+  the path yourself) with a built-in url-test group that re-measures every five
+  minutes and sends traffic to the fastest node, health-checking dead nodes out.
+  **The subscription URL is treated as a credential** — the path of a
+  subscription link *is* its token — so it lives at the same standard as the two
+  forward keys: kept in the local settings file, never sent with a request, and
+  never echoed in a settings payload. The panel shows the masked host only
+  (`https://host/…`); "Show" and "Copy" fetch the value from the settings page
+  itself (`GET /egress/url`), an empty input means "keep the stored address", and
+  "Clear" removes it and takes the outlet down with it.
+- **Single-proxy mode**: type an `http://` / `https://` / `socks5://` /
+  `socks5h://` proxy address and every handled request dials through it.
+
+**At rest.** mihomo has to read that address out of a config file (the plugin
+writes a throwaway `mihomo.yaml` into its data directory and spawns mihomo from
+there), so the on-disk copy stays plain text. What this treatment removes is the
+payload echo, the log line and the shoulder — not another process on the same
+machine.
+
+Only three kinds of traffic are taken over: model inference, the model listing
+fetch, and the egress IP probe; announcements, upgrades, and the EAC lane stay
+direct so the subscription identity never mixes into the release channel.
+
+**Scope.** The outlet serves this plugin's opencode traffic and nothing else on
+this machine. The mihomo it spawns runs from a throwaway config of the plugin's
+own: `bind-address: 127.0.0.1` with `allow-lan: false`, no `tun:` section, no
+system proxy, no system-level proxy registration and no virtual adapter — the
+listener is a temporary free loopback port. Your browser, shell tools and other
+IDE extensions never go through it; only requests this plugin sends to the
+opencode gateway are rerouted. Single-proxy mode works the same way: the rewrite
+happens inside the plugin.
+
+**Live status.** While the outlet is on, the settings page adds three lines below
+it: the current outlet (masked host · mode), the **best node** (the node url-test
+picked, with the delay that won it the rank), and **opencode access** (the last
+model-listing round trip, in seconds). Node and latency are readings, refreshed
+every 15 seconds by asking mihomo's own controller; when a reading is missing the
+line says "measuring…" and outbound traffic is unaffected.
+
+**What it can and cannot buy you**: per-IP rate limits and region gates move
+with the outlet; per-session rate limits and fingerprint gates do not care
+which outlet you use. Toggling the outlet re-probes on its own — a cold outlet
+needs a few seconds before it carries traffic, and the plugin waits for the new
+exit to answer before regrouping, so region-gated models follow the new exit.
+Reprobe (below) does the same on demand.
+
 **Re-check geography.** `重新探测可用性` (Reprobe) re-runs availability against
 your current exit. Toggling a VPN and re-probing moves region-gated models
 between the two groups on its own.
@@ -205,7 +285,7 @@ index.js      host half: adapter registration, catalog + availability probes,
 adapter/      kernel seam: the only module in the package allowed to import
               @deepseek-ai/* (kernel.js: attribution User-Agent with a literal fallback)
 src/adapter.js  structural LlmAdapter: providerInfo, listModels, resolveModel,
-                prepareCall, stream, providerRetryPolicy, imageRequestPricing
+                prepareCall, stream, providerRetryPolicy
 src/upstream.js gateway identity: credentials, session/request id minting,
                 tool fingerprint, endpoint selection per wire
 src/stream.js   three wire decoders (chat / messages / responses) normalised to
@@ -231,36 +311,14 @@ Design decisions worth knowing:
 - **Structural adapter, no `@deepseek-ai/dsh-llm` import.** The kernel never checks `instanceof`, so the adapter is duck-typed. This keeps the plugin from pinning itself to one kernel version and is what lets the same code run on both 0.1.5 and 0.1.7.
 - **Own JSON store instead of the settings seam.** The settings registration API differs between kernels; a private JSON store under `DSH_HOME` behaves identically on both and keeps the forward key in a `0600` file that never enters any shared settings document.
 
-### Why a budget, and also `reasoning_effort`
+### Why a budget, and not `reasoning_effort`
 
-An early measurement (2026-09-24) showed that sending a `reasoning_effort` string
-upstream was a no-op for the free models back then: repeated samples at three
-different nominal effort levels produced statistically indistinguishable reasoning
-tokens. So OFM implemented effort as a hard output-token ceiling, which does bind
-(recorded reasoning tokens rise monotonically with the rung, and a truncated
-`max_tokens` visibly shortens the answer).
-
-The conclusion was revised on 2026-10-02, when effort-aware models arrived:
-**fledge, space-bunny, MiMo V2.5/V2.6 and Nemotron 3-ultra/3.5 genuinely respond
-to `reasoning_effort`**. For those six models OFM sends the field on top of the
-budget (`light`→`low`, `balanced`→`high`, `deep`→`max`). Live measurements:
-
-- **fledge accepts only `low`/`high`/`max`** — `none`/`minimal`/`medium`/`xhigh`
-  are all 400. The rung changes the output: on the same ladder problem the mean
-  visible output went 413 → 547 → 704 tokens across light/balanced/deep, all three
-  correct, with thinking length rising alongside.
-- **MiMo V2.6/V2.5 and Nemotron zero their reasoning tokens on
-  `reasoning_effort=none`** (thinking really off) and vary thinking between
-  `low` and `max` — the field is not decorative.
-- **Non-effort-aware models (longcat, big-pickle, …) do not respond to the field**,
-  so OFM sends them the budget only, no effort string — measured reasoning tokens
-  stay flat across rungs (longcat 461/508/477), and the only difference between
-  rungs is how much output room the answer gets.
-
-So Light/Balanced/Deep are a dual mechanism: the budget always binds and is
-recorded per call; `reasoning_effort` is sent only to the six effort-aware models.
-Balanced vs Deep means "high + a 16 K ceiling" vs "max + the model's full capacity"
-on effort-aware models, and merely a different output ceiling on the others.
+Passing a reasoning-effort string upstream was measured to be a no-op on this
+lane: repeated samples at three different nominal effort levels produced
+statistically indistinguishable reasoning tokens. Shipping a control that does
+nothing is worse than shipping no control, so effort is implemented as a hard
+output-token ceiling, which does bind — recorded reasoning tokens rise
+monotonically with the level.
 
 ### Three kernel behaviours that cost real debugging time
 
@@ -287,18 +345,6 @@ These are recorded here because they will bite any provider plugin:
    serving the app. The shape that works is `ctx.inject(deps, callback)`: give the
    services you need their own fiber and let *it* wait, instead of guessing once at
    load time.
-4. **A missing `imageRequestPricing()` makes every compaction fail with
-   `gateway/internal`.** The kernel forwards this call unguarded: it looks the
-   adapter up with `?.` but invokes the method without checking it exists. So any
-   adapter that does not implement it — every structural one that does not extend
-   the base class — throws
-   `this.adapters.get(...)?.adapter.imageRequestPricing is not a function` the
-   moment compaction reaches it. The `LlmAdapter` base class already defaults to
-   `undefined`, and `priceSurface` treats `undefined` as the legal "fall back to
-   the fixed heuristic" input, so an explicit empty implementation returning
-   `undefined` is enough — this gateway publishes no vision-token accounting to
-   report anyway. **Only the compaction path consults this table**; ordinary turns
-   never do.
 
 ### Why the response is read by body shape, not by `Content-Type`
 
@@ -332,8 +378,11 @@ output speed, and says so.
 Every model enables one bounded recovery attempt by default, across the Chat
 Completions, Messages and Responses upstream protocols. It requires a first
 stream that delivered nonempty reasoning, no answer text or tool call, and then
-reached EOF without a normal terminal frame. Cancellation, a normal ending, an
-output ceiling and an explicit upstream error do not trigger recovery.
+either reached EOF without a normal terminal frame, or received a normal `stop`
+terminal carrying reasoning only with no answer text — a turn the host would
+classify as an empty response. Cancellation, a normal ending that already
+delivered answer text or a tool call, an output ceiling and an explicit upstream
+error do not trigger recovery.
 
 The plugin sends **one new request** containing the original input and the
 received reasoning as a text checkpoint, asking for the answer directly. This is
@@ -488,11 +537,8 @@ browser and inside the DSHEAC AIO desktop window:
 | Client bundle hot swap | Replacing `client.js` reloaded the browser bundle automatically via the kernel's client-hmr (observed twice) |
 | Trust fence | Non-loopback Host / cross-site `sec-fetch-site` / foreign `Origin` all 403; cookieless loopback requests 401 (same as the kernel's `/api`) |
 | SSE push | `hello`/`announcements`/`update`/`upgraded` events verified; EventSource reconnects after a hot reload |
-| Effort propagation | Budget mechanism measured live (2026-09, pre-effort-aware): reasoning 2048 (budget-truncated) / 3386 / 3522 across light/balanced/deep, output rising monotonically; since 2026-10 the effort-aware models additionally receive a real `reasoning_effort` (see [Why a budget, and also reasoning_effort](#why-a-budget-and-also-reasoning_effort)) |
+| Effort propagation | light/balanced/deep measured live: reasoning 2048 (budget-truncated) / 3386 / 3522, output rising monotonically |
 | Region gating | Region-blocked model surfaces as `REGION_BLOCKED` and stays in its own group |
-| Gate drift | `FreeTierError` / "only be used from within OpenCode" classifies as `GATE_DRIFT` rather than `INVALID_CREDENTIAL`, and is deliberately outside the retryable set — re-sending the same identity gets the same answer. The discriminator does not depend on `status`, so an in-stream refusal (where `status` is `undefined`) is caught too. Measured: `403 code=GATE_DRIFT type=FreeTierError`, with the region and quota branches unchanged |
-| Outbound diagnostic switch | Both paths measured: `OUR_FREE_MODEL_DEBUG=1` and `~/.dsh/our-free-model/debug`. On → one line per request with endpoint, `x-opencode-*` gate headers, session/request ids, User-Agent, declared tool names and roles; off → no output at all. A planted secret string searched back through the trace: zero hits |
-| Context window | Both Nemotrons were declared 128 000, so `dsh-compaction-basic` fired at `128000 × 0.8 = 102 400`. Needle test (codeword in message 1, plus a control that never receives it): `nemotron-3-ultra-free` recalled it in full at **900 032** tokens and `nemotron-3.5-lightning-free` at **300 032**, while neither control produced it; pi-ai's registry and the Zen free-model table both say 1 000 000 / 262 144, matching the measurement. Updated to those values, moving the thresholds to 800 000 / 209 715 |
 | Forward listener | `/v1/models`, streaming and non-streaming `/v1/chat/completions`, unauthenticated requests rejected `401` |
 | UI strings | No mojibake; the upstream vendor name appears in exactly two places — the repository docs and the announcement body, since #8's disclosure needs a place a user can actually see. The model picker, the settings page and error copy still never name it |
 Not verified, so stated plainly: the **final OS-level notification rendering**
@@ -508,13 +554,15 @@ it never touches files.
 - **"No usage cap" means no cap to buy.** There is no balance, no plan and no per-token billing; the lane is metered by session rate, though, and hammering it surfaces as `429`. The plugin marks the model *quota reached* rather than hiding it, and the next probe clears the state.
 - **Some upstream models are slow.** `nemotron-3.5-lightning-free` measured over 30 s to first token in one run. That is upstream latency, and the dashboard reports it rather than hiding it.
 - **Output speed is sometimes `—`.** A model that answers in one or two large frames, or whose thinking never streams, has no window worth dividing. The panel says so instead of publishing the model's thinking time as decoding speed.
-- **Automatic recovery has request, time and context limits.** It handles only reasoning-only EOF and adds at most one request. Answer text, tool calls, cancellation and explicit errors exclude recovery. A checkpoint request cannot preserve internal upstream state that was never sent, and success is not guaranteed. Usage with a missing report is only the known part.
+- **Thinking is a silent wait, and it shares the output budget.** `mimo-v2.6-flash-free` measured 60–70 s of silence while the lane billed 3024 reasoning tokens and streamed not one reasoning frame; such a turn ends as `stop` with nothing visible, which clients report as an empty response. The forward endpoint and the LAN relay keep the connection alive with heartbeats — but that protects the connection, not the timeout: the SSE parser skips comment frames, and pi-ai's idle watchdog (`streamIdleTimeoutMs`, default 300 s) resets only when real content frames arrive, so a stall past 300 s on the wire still fails (issue #34). Only the caller can give it **budget**: raise the per-call output ceiling past 16k, or use a model the catalogue marks `reasoning: false`.
+- **Automatic recovery has request, time and context limits.** It handles only reasoning-only EOF and reasoning-only silent stops (a normal `stop` ending with no answer text) and adds at most one request. Answer text, tool calls, cancellation and explicit errors exclude recovery. A checkpoint request cannot preserve internal upstream state that was never sent, and success is not guaranteed. Usage with a missing report is only the known part.
 - **Capabilities are what probes can confirm.** Anything the public listing and a live probe do not evidence is left unlabelled.
 - **Source is plain JavaScript.** It has to be, to load as a local plugin. Anyone with the folder can read the gateway logic; treat that as an accepted property of this distribution form, not as something obfuscation would fix.
 - **Desktop installs need a real directory**, for the reason given in [Install](#install).
 - **Upgrade and hot-reload trust boundary**: as of v1.3.2 the in-app upgrader's trust root is the Ed25519 public key pinned inside the plugin, not "HTTPS to the repository" — a manifest must carry the release key's signature before anything is installed, so a poisoned mirror (jsDelivr included) fails the upgrade instead of executing code. Whoever holds the **release private key** can push arbitrary code, the same trust model as whoever can push the repository, but a repository account takeover is now a failed-upgrade outage for every user rather than a direct RCE. File integrity is enforced by signature + SHA-256 manifest; content safety by the client-side allowlist renderer and the host's plugin isolation.
 - **The AIO build's WebView2 permission policy may deny notification permission** (measured `denied` on this machine). The announcement center says so plainly; plain-browser access to dsh web is unaffected.
-- **The plugin routes' auth depends on the composition**: with a connection service mounted (dsh web, the AIO desktop) it matches the kernel's `/api` (the app's own cookie/token); in minimal compositions without one, a structural fence applies (loopback + same-origin), and other local processes can still reach the routes — the same behaviour the kernel has in those compositions.
+- **The forward port is not required to be 18899.** When the port is taken the listener moves to the next free one and writes that port back into the settings (the settings page carries the note). That is deliberate: a port change beats a forward listener that silently stays down. Which process holds the port is the operating system's answer to give; the plugin only reports what it said.
+- **The plugin routes' auth depends on the composition**: with a connection service mounted (dsh web, the AIO desktop) it matches the kernel's `/api` (the app's own cookie/token); in minimal compositions without one, a structural fence applies (loopback + same-origin), and other local processes can still reach the routes — the same behaviour the kernel has in those compositions. **This covers `/forward/key` and `/forward/lan/key` too**: in such a composition any local process can fetch both keys with one request and spend the machine's free quota from another machine. Treat the two keys as local-process-readable files there (same trust level as `settings.json`), or mount a connection service at deploy time when you need more isolation.
 
 ## Development
 
@@ -534,7 +582,6 @@ node scripts/release-e2e.mjs        # upgrade against the real manifest, and pro
 node scripts/picker-test.mjs        # only usable models are advertised, and the picker never goes empty
 node scripts/tui-test.mjs           # the plugin activates and serves with no web server in the composition
 node scripts/host-selftest.mjs      # host half end to end against the live upstream
-node scripts/reverify.mjs           # gate check: catalogue / anonymous gate / per-model, exit 1 when the gate moved
 ```
 
 Release manifests must be signed with the release private key (`--key <pem-path>`
@@ -548,34 +595,13 @@ root: change the pinned key in `src/updater.js` and cut a full release.
 capability matrix, region gate, the `reasoning_effort` no-op sampling, budget
 dialects, dangling tool calls, tool-name charset rules, raw read timestamps
 (`batch-delivery`), per-frame arrival against final usage (`decode-window`),
-and whether a long answer survives its ceiling (`long-answer`). They now **all**
-import this plugin's own `src/upstream.js` (session/request id minting, tool
-fingerprint, `CLIENT_UA`) and run from the repo root
-(`node scripts/probes/free-lane-survey.mjs`). The earlier versions imported a
-third-party SSE client directory that was never in the tree, so eight of them
-died with `ERR_MODULE_NOT_FOUND` on load — at exactly the moment upstream moves
-the gate and they are needed most. The User-Agent is no longer hard-coded
-either: the probes now send `CLIENT_UA`, the identity the plugin really sends.
-None of them is wired into `npm test`, which runs the offline checks above — no
-network, no free-lane quota spent.
-
-### Outbound diagnostic switch
-
-When the gate moves again, the only way to help yourself is a record of what
-actually left the machine:
-
-```bash
-OUR_FREE_MODEL_DEBUG=1 dsh …       # shell / headless
-touch ~/.dsh/our-free-model/debug  # desktop has no shell environment to export into; takes effect immediately, no restart
-```
-
-Each outbound request then writes one line to stderr: endpoint, the
-`x-opencode-*` gate headers, session and request ids, the final User-Agent,
-whether the request is anonymous, and the **shape** of the body (model, wire,
-roles, declared tool names, budget). It never prints message content, the system
-prompt, tool arguments, or a credential — a diagnostic that leaks teaches people
-to leave it on. To see which gate condition changed, read `code` / `type` on the
-`FAIL` line.
+and whether a long answer survives its ceiling (`long-answer`). Six of them
+exercise this plugin's own code and run from the repo root
+(`node scripts/probes/pairing-repair.mjs`); the rest reach the upstream through a
+third-party SSE client and assume that checkout's module paths, so they are
+recorded as evidence rather than offered as a test suite. None of them is wired
+into `npm test`, which runs the offline checks above — no network, no free-lane
+quota spent.
 
 Requires Node `^22.19.0 || >=24.0.0`. No install step, no dependencies.
 
@@ -600,7 +626,7 @@ On privacy and trust, plainly:
 - **No account pool, no relay, no reseller.** There is no second lane in this
   version; the four rows above are the complete set of destinations the plugin
   can contact. `npm test` touches no network at all, and the only things that do
-  are `scripts/host-selftest.mjs`, `scripts/reverify.mjs` and `scripts/probes/`, which you run by hand. If
+  are `scripts/host-selftest.mjs` and `scripts/probes/`, which you run by hand. If
   another source is ever added, this section is updated before the feature is.
 - **Your prompts, tool results and any attached images go to that upstream as an
   ordinary inference request** — the same as calling any model API. Nothing else
@@ -619,11 +645,12 @@ On privacy and trust, plainly:
 
 - All state lives in `DSH_HOME/our-free-model/`; usage and settings stay local, nothing is uploaded.
 - The forward listener binds a **loopback address only**, `127.0.0.1` by default, and rejects keyless requests. Widening it to a routable interface is refused: `POST /settings` answers 400 with the reason, and on a composition with no web server a hand-written `settings.json` simply does not start the listener. That traffic is spent from this machine's free lane; one string in a settings file should not put a whole subnet on it.
+- **Network access is a second door, not a relaxation of the rule above.** The local listener still binds loopback only and still refuses a routable address; reaching another machine takes an explicit switch, and then **every** request must carry the network key — `/` and `/health` included, unlike the local listener, because an unauthenticated liveness answer tells the whole subnet that this machine is here and proxying. The relay carries three whitelisted paths (`/v1/models`, `/v1/chat/completions`, `/v1/responses`) and is not a general proxy for whatever else answers on loopback; it swaps the network key for the local one at the door, so the two are never interchangeable; a request that already carries the relay's hop marker is refused with `508`, so a relay port equal to the local one cannot spin. The network key is minted by `crypto`, compared with `timingSafeEqual`, stored in the same `0600` file, and rotated on its own from the panel.
 - The forward key is minted at runtime by `crypto`, compared with `timingSafeEqual`, and stored in a `0600` file. No hardcoded credential ships in this repository. `/` and `/health` answer ahead of the key check because they are liveness probes — they answer only "is it there"; the model roster requires the key.
 - The plugin's HTTP routes carry a **request trust fence** (fixed in v1.1): the plugin's `/api/our-free-model` prefix outranks the kernel's `/api` in webServer's longest-prefix dispatch and used to bypass kernel auth. Every request now goes through the composition's `connection` admission first (exactly the kernel's `/api` check: cookie/token); compositions without a connection service fall back to a structural fence — loopback Host, cross-site `sec-fetch-site` refused, `Origin`/`Referer` must match the Host authority and port, and a **missing or empty Host is refused too** (fail closed; there is no fallback to the socket's local address). Measured: foreign Host/Origin 403, cookieless loopback 401. `connection` is resolved per request, because the browser half provides it only after plugins load — reading it once at apply time silently degrades the fence to its structural layer for the life of the process.
 - **Announcement HTML renders through a strict client-side allowlist**: `scripts/sanitize-test.mjs` runs an XSS corpus (script injection, event handlers, `javascript:`/`data:` URLs, iframe/svg/form, style injection, mangled tags) and asserts all of it is dropped; nothing ever reaches an `innerHTML` sink. The feed URL is user-overridable, so the renderer treats feed content as untrusted.
 - **The in-app upgrade integrity chain (signed as of v1.3.2)**: manifest Ed25519 signature verification (public key pinned in `src/updater.js`; unsigned or unverified manifests are refused outright, so no mirror can serve an installable forgery) → manifest validation (semver, path traversal, hash shape, `base` restricted to manifest-relative paths) → per-file SHA-256 + byte size on download → read-back verification of staging → read-back verification after install → backup restore on any failure. The manifest is re-fetched immediately before installing so a stale one can never vouch for different bytes. Boundaries in [Known limitations](#known-limitations).
-- **The update channel is fully decoupled from `feedUrl`** (v1.3.2): the setting redirects the announcement feed only, never the upgrade manifest — previously one settings value could point the update channel at any server with self-consistent hashes, turning "wrote a config field" into "executed arbitrary code in the host process". The announcement override itself is now restricted to https (loopback http excepted, so a locally-hosted mirror and the test suites still work) and may not carry credentials.
+- **The update channel is fully decoupled from `feedUrl`** (v1.3.2): the setting redirects the announcement feed only, never the upgrade manifest — previously one settings value could point the update channel at any server with self-consistent hashes, turning "wrote a config field" into "executed arbitrary code in the host process". The announcement override itself is now restricted to https (loopback http excepted, so a locally-hosted mirror and the test suites still work) and may not carry credentials. **The target host is not restricted**: any https address may serve as `feedUrl`, and the plugin polls it on the `feedPollMinutes` period — so in a composition without a connection service (see the auth note above), a local caller who can edit settings can point the process at any external address indefinitely. This is trusted the same way as the plugin's other outbound calls: someone who can write `settings.json` can already install code.
 - **The forward listener binds loopback by resolution, not by spelling** (v1.3.2): a hostname such as `localhost` is resolved with `dns.lookup` first and every answer must be loopback; the listener binds the resolved IP — so a hosts file or enterprise DNS pointing `localhost` at a routable interface can no longer pass the check while the listener hands the lane to the subnet.
 - Uninstalling removes the bundle entry; the plugin leaves no patches behind. Its data directory is plain JSON you can delete.
 

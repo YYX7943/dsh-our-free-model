@@ -37,15 +37,15 @@
 - **上游写在明面上**——只有一个来源：OpenCode 的 Zen 网关（`https://opencode.ai`），不经任何第三方中转。谁在服务你的请求、你的数据发到哪儿，见[上游是哪些源](#上游是哪些源)。
 - **清单跟随上游**——模型集合、上下文长度与能力每次刷新重新拉取，不是写死在插件里的一份快照。
 - **选择器只给真能用的模型**——上游清单点名、但网关明确拒绝路由的模型（回 `Model is unavailable`、404 找不到这个 id）会从下拉框里移除，只在设置页留痕并写清拒因；网关自己的毛病（5xx）、配额（429）、超时断网这些**不是对模型的判定**，一律保持可达；地区门拦截的单独归到 `region-limited` 分组。整轮全部被拒时一律保留，绝不让选择器变空。
-- **不把"非聊天模型"塞进选择器**——`jev-1.13-free` 是 Zen 上的 System One 结构化决策模型：它不生成文本，而是把一段 `state` 对着带类型的提问算出值与概率，走 `/zen/v1/systemone`。把它发到 `/chat/completions` 每次都回 `500 Internal server error`（2026-10-01 本机实测，同一 id 打 `/systemone` 则 200 并给出答案）。所以这类 id 在**目录阶段**就被 `NON_CHAT_MODELS` 排除，选择器与设置页都不出现——它们不是"不可用"，是**另一类东西**，写成"暂不可用"反而是误导。要用它请装 `dsh-jev-decide` 工具插件。
 - **公告中心 + 实时推送**——仓库主人在仓库里编辑一份 JSON 并推送，所有安装最迟在一个轮询周期内收到；内容是白名单约束下的 HTML，支持图文排版；`urgent` 级别直接全屏弹窗；可选系统级通知。
 - **应用内升级**——设置页一键升级：下载 → SHA-256 校验 → 备份 → 原子替换 → 校验回读 → 热重载，任一步失败自动回滚到上一个版本。
 - **热重载**——升级与代码更新即时生效，不需要重启应用；也可在设置页手动触发，或开启文件监视自动重载。
 - **流式响应认出 body 而不是认出 header**——网关在高负载下会用 `application/json` 的 content-type 回一整套 SSE 帧，插件按 body 的形状判定并把已嗅探的字节重新喂回流，既不会整轮报错，也不会因为一个 header 说谎就把能用的模型判成不可用。
-- **思考强度真的生效，是"预算 + 真实 effort"双机制**——`Light / Balanced / Deep` 首先是一个**硬性输出 token 预算**（2 048 / 8 192 / 模型上限；思考关不掉的模型如 MiMo V2.6 这类，三档整体翻倍为 4 096 / 16 384 / 模型上限，因为思考与正文抢同一份额度；设置页每张模型卡直接印出该档实际会下发的上限）。其次，对 **effort-aware** 模型（fledge、space-bunny、MiMo V2.5/V2.6、Nemotron 3-ultra/3.5），同一档位还会把 `reasoning_effort` 真实发往上游（light→low、balanced→high、deep→max），实测该字段有效：fledge 的输出/思考长度随档位上升且只接受 low/high/max（其余值 400），MiMo/Nemotron 的 `none` 能真正关掉思考。对非 effort-aware 模型（longcat、big-pickle 等）则**纯为预算**、不发 effort 字段（实测推理 token 不随档位变化）。详见[为什么用预算，同时也发 reasoning_effort](#为什么用预算同时也发-reasoning_effort)。
+- **思考强度真的生效**——`Light / Balanced / Deep` 对应输出 token 预算 2 048 / 8 192 / 模型上限，且逐次调用留痕。思考关不掉的模型（MiMo V2.6 这类）三档整体翻倍为 4 096 / 16 384 / 模型上限，因为思考与正文抢的是同一份额度；设置页每张模型卡都直接印出这一档实际会下发的上限。它不是把一个 effort 字符串丢给上游然后假装有用（原因见[为什么用预算而不是 reasoning_effort](#为什么用预算而不是-reasoning_effort)）。
 - **无浏览器界面也能跑**——插件只把 `llm` 当作硬依赖，没有 web server 的 composition（`dsh-tui` 这类）里照样启动、照样出模型；看板半身挂在一条自己的 fiber 上，等 `webServer` 出现再挂载，所以既不会把模型车道拖下水，也不会因为插件先于 web 服务加载就永远丢掉设置页。
 - **用量看板，全部留在本机**——Token 热力图、总量曲线（可看总计或单个模型）、输出速度与首字延迟逐次采样。不上传任何东西。
 - **OpenAI 兼容转发端口**——本机其它工具用一个 base URL + Key 就能调用这些模型。
+- **EAC 渠道（桌面端专属）**——在 DeepSeek Harness 桌面端与 DSHEAC AIO 桌面端里自动解锁一条协付通道，模型以 `EAC` 前缀显示（如 `EAC DeepSeek V4.1 Flash`）；凭据加密密封、宿主指纹闸门把守，命令行与其余宿主上整条通道不存在。见 [EAC 渠道](#eac-渠道桌面端专属)。
 - **接口有鉴权围栏**——插件的 HTTP 路由优先级高于内核 `/api`，因此自带与内核一致的信任检查（优先复用 composition 的 connection 服务，缺失时退回结构化围栏）。
 
 ## 你会看到什么
@@ -98,8 +98,8 @@ PROFILE_UPGRADE_REQUIRED: offline dependency migration is not yet available
 手工以真实目录安装，在 `<DSH_HOME>/profiles/<profile>/` 下做三件事：
 
 1. 把发布文件**复制**进 `node_modules/dsh-our-free-model/`
-   （`index.js`、`client.js`、`src/`、`locale/`、`icon.svg`、`cordis.patch.yml`、`package.json`）
-2. `dependencies` 里加 `"dsh-our-free-model": "1.1.2"`——写版本号，**不要写 `link:`**
+   （`index.js`、`client.js`、`adapter/`、`src/`、`locale/`、`icon.svg`、`cordis.patch.yml`、`package.json`——`adapter/` 不能漏：`index.js` 第一行就 import 它）
+2. `dependencies` 里加 `"dsh-our-free-model": "1.4.4"`——这个数字**跟随仓库 `package.json` 的 `version`**（改版本时同步，当前即 1.4.4），不要抄旧值，也**不要写 `link:`**
 3. `dsh.profile.bundles` 末尾追加 `"dsh-our-free-model"`
 
 > **不要**再往 `cordis.patch.yml` 里加条目。被 `dsh.profile.bundles` 引用的包，它自带的
@@ -167,6 +167,57 @@ POST /v1/chat/completions     流式与非流式
 POST /v1/responses
 ```
 
+端口被别的程序占着时，插件不会哑掉：先在同一端口重试几轮（刚关闭的监听、刚删掉的
+portproxy 规则通常会在几百毫秒内放开），仍然占着就顺延到下一个可用端口，并在设置页写明
+"请求的 18899 不可用，实际监听 18900"，落盘的也是这个实际端口。Windows 上最常见的占用
+来源是一条 `netsh interface portproxy` 规则（由 IP Helper 服务承载）：它对 `0.0.0.0` 的
+监听会让回环绑定直接报 `EACCES`（而不是 `EADDRINUSE`）。`netsh interface portproxy show
+all` 能列出规则，`netsh interface portproxy reset` 能清掉。
+
+转发端点是**全流式**的：除了 `data:` 帧，思考期的静默还会被周期性写出的 SSE 注释帧
+（`:` 开头）填上，客户端的 idle 超时因此不会把"上游在想"读成"连接已死"。思考内容按
+`reasoning`、`reasoning_content`、`reasoning_text` 三个字段名识别——同一个思考若被上游同时
+写在两个字段里只计一次——`reasoning_details` 数组同样识别。上游本身不流式思考的模型，这里
+也不会有思考帧，见[已知边界](#已知边界)。
+
+**给同一网络的其它设备用**：同一个面板下方还有"局域网访问"。它默认关闭；打开后中继绑一个可路由地址（默认 `0.0.0.0`），并且要求**一把单独的局域网 Key**——与上面那把小 Key 互不通用，所以哪一边泄露都只需要轮换那一边，本机已接好的工具不受影响。中继把请求原样转给本机监听，模型清单、流式、错误语义与本机完全一致。端口填 `0` 表示自动分配（本机 18899 常常已被占用或已被端口代理占着），应用后面板会显示实际端口与局域网地址。开启期间，能连到这台机器的任何人都可以用这把 Key 花掉本机的免费额度，所以只在信任的网络里开，必要时用防火墙限制来源网段。
+
+**走代理出口**：`设置 → Our Free Model → 出口代理`。可选功能，默认关闭，关着时请求直连。
+两种模式：
+
+- **订阅模式**：粘贴 Clash/V2Ray 订阅链接，插件在本机拉起 mihomo（自动查找，常见如
+  Clash Verge 的 `verge-mihomo.exe`，也可手填路径），内置 url-test 组每 5 分钟测速一次、
+  自动把流量分给最快节点，连不上的节点被健康检查踢出。**订阅地址按密钥对待**——订阅链接
+  的路径本身就是凭据，所以它和上面那两把 Key 同一个规格：只存在本机设置文件里，不随请求
+  外发，也不进设置接口的返回负载。面板默认只显示脱敏域名（`https://host/…`），要看或复制
+  时点"显示"，由设置页单独取一次（`GET /egress/url`）；输入框留空表示保持当前地址不变，
+  想彻底删掉点"清除"（会同时关掉出口）。
+- **单代理模式**：手填一个 `http://` / `https://` / `socks5://` / `socks5h://` 代理地址，
+  所有接管的请求都从它走。
+
+**落盘说明**：mihomo 必须自己从配置文件里读到订阅地址（插件在数据目录里生成 `mihomo.yaml`
+再拉起它），所以本机磁盘上的那份副本仍是明文。这一项收紧的是接口回声、日志与肩窥，
+不是同机上的其它进程。
+
+出口只接管三类流量：模型推理、模型清单拉取、出口 IP 探测；公告、升级与 EAC 通道仍走
+直连，不把本机的订阅身份混进发布通道。
+
+**作用域**：出口只对本插件的 opencode 流量生效，**不动这台机器的任何其它程序**。拉起
+mihomo 时用的是插件自己的一个临时配置：`bind-address: 127.0.0.1` + `allow-lan: false`，
+不写 `tun:` 段，不设置系统代理、不注册任何系统级代理或虚拟网卡，监听端口也只是回环上
+一个临时空闲端口。换句话说，浏览器、命令行工具、其它 IDE 插件的流量都不经过它——只有
+本插件发往 opencode 网关的请求会被改道。单代理模式同理，只在插件内部改写请求。
+
+**入口状态**：出口开着时，设置页在出口下方多显示三行——当前出口（脱敏域名 · 模式）、
+**当前最佳节点**（url-test 选中的节点名与它最近一次测速的延迟）、**访问 opencode**
+（最近一次模型清单往返耗时，秒）。节点与耗时是**读数**，由插件每 15 秒问一次 mihomo 的
+控制器刷新；拿不到读数时显示"测量中…"，不影响出站流量。
+
+**收益边界**：按 IP 的频率限制与地区门会随出口
+变化；按 session 的速率限制与请求指纹门不认出口，换代理也无效。开/关出口后插件会自己
+重探一次（冷启动的出口需要几秒才通，插件会等新出口应答后再重新归组），也可以手动点
+"重新探测可用性"。
+
 **重新核对地区**：点"重新探测可用性"，会按当前出口重跑探测。开/关 VPN 后再点一次，
 地区受限模型会在两个分组之间自动迁移。
 
@@ -187,7 +238,7 @@ index.js        Host 半身：适配器注册、清单与可用性探测、设�
 adapter/        内核接缝：全包唯一允许 import @deepseek-ai/* 的地方
                 （kernel.js：attribution User-Agent，失败降级为字面量）
 src/adapter.js  结构性 LlmAdapter：providerInfo、listModels、resolveModel、
-                 prepareCall、stream、providerRetryPolicy、imageRequestPricing
+                prepareCall、stream、providerRetryPolicy
 src/upstream.js 网关身份：凭据、session/request id 铸造、工具指纹、按线协议选端点
 src/stream.js   三种线协议解码（chat / messages / responses）归一为 harness StreamChunk，
                 并做不相交的 token 计数
@@ -214,17 +265,11 @@ client.js       浏览器半身：手写 ModuleLoader bundle，无构建步骤
 - **自己的 JSON 存储，而不是 settings seam**。settings 注册 API 在两版内核间不一致；
   私有 JSON 存储行为一致，并且转发 Key 落在一个 `0600` 文件里，不进入任何共享设置文档。
 
-### 为什么用预算，同时也发 `reasoning_effort`
+### 为什么用预算，而不是 `reasoning_effort`
 
-早期实测（2026-09-24）显示：把 `reasoning_effort` 字符串发给当时的大多数免费模型是**空操作**——三个名义档位反复采样，思考 token 在统计上无法区分。因此 OFM 把思考强度实现为**硬性输出 token 上限**（这个上限真实约束：`max_tokens` 被截断时答案变短，留痕的思考 token 随档位上升）。
-
-2026-10-02 引入 effort-aware 模型后，结论需要修正：fledge、space-bunny、MiMo V2.5/V2.6、Nemotron 3-ultra/3.5 这 6 个模型**会真正响应 `reasoning_effort`**。OFM 对这 6 个模型在预算之外同时发送 `reasoning_effort`（light→`low`、balanced→`high`、deep→`max`），实测：
-
-- **fledge 只接受 `low`/`high`/`max`**，`none`/`minimal`/`medium`/`xhigh` 一律 400；档位确实改变输出（同一道题 light/balanced/deep 的平均可见输出 413→547→704 token，全部答对，思考长度同步上升）。
-- **MiMo V2.6/V2.5、Nemotron 的 `reasoning_effort=none` 能把思考 token 真正归零**（关思考），`low`/`max` 会改变思考量——所以这个字段不是摆设。
-- **longcat、big-pickle 等非 effort-aware 模型不响应这个字段**，OFM 对它们**只发预算、不发 effort 字符串**——实测三档推理 token 基本不变（longcat 461/508/477），档位差异纯粹是答案可用的输出空间。
-
-所以现在的 Light/Balanced/Deep 是"**预算 + 真实 effort**"的双机制：预算永远生效、逐次调用留痕；`reasoning_effort` 只在能响应的 6 个 effort-aware 模型上发送。Balanced 与 Deep 的差异在 effort-aware 模型上是"high + 16K 上限"对"max + 模型全容量"，在非 effort-aware 模型上则只是输出空间不同。
+实测过：在这条车道上把 reasoning-effort 字符串发给上游是**空操作**——三个不同名义档位
+反复采样，思考 token 数量在统计上无法区分。做一个不起作用的控件比不做更糟，
+所以思考强度实现为**硬性输出 token 上限**，它确实会约束——留痕的思考 token 随档位单调上升。
 
 ### 三个真实浪费过调试时间的内核行为
 
@@ -245,13 +290,6 @@ client.js       浏览器半身：手写 ModuleLoader bundle，无构建步骤
    server，而是因为插件比 web 半身先加载——于是设置页路由一条都没挂上。正解是
    `ctx.inject(deps, callback)`：为需要的服务开一条自己的 fiber，让它去待命，
    而不是在加载的那一瞬间猜一次。
-4. **`imageRequestPricing()` 缺了会让每次压缩都报 `gateway/internal`。** 内核转发这
-   个方法时不设防：provider 查表用了 `?.`，方法本身直接调用。所以任何**没有**实现它
-   的适配器（结构性的、没继承基类的都在此列）只要被 compact 走到，就抛
-   `this.adapters.get(...)?.adapter.imageRequestPricing is not a function`。
-   `LlmAdapter` 基类有默认实现，`priceSurface` 也把 `undefined` 当作"退回固定启发式"
-   的合法输入，所以显式写一个返回 `undefined` 的空实现就够了——这条网关本来也没有
-   官方视觉计费规则可报。**只有压缩路径查这张表**，普通对话不查。
 
 ### 为什么按 body 的形状而不是 `Content-Type` 读响应
 
@@ -279,7 +317,9 @@ reasoning token 从分子里剔掉，`decodeWindow()` 拒掉短到没法计时�
 
 所有模型默认启用一次有界恢复，Chat Completions、Messages、Responses 三种上游协议
 共用这项行为。触发条件是：第一段只有非空思考、没有正文或工具调用，且上游在没有正常
-结束帧时直接关闭流；用户取消、正常结束、达到输出上限和明确的上游错误不会触发恢复。
+结束帧时直接关闭流；或上游发了正常 `stop` 收尾、却同样只有思考没有正文——宿主会把
+这种「空停」回合判成空响应，恢复会接着要一次正文。用户取消、已经输出正文或工具调用
+的正常结束、达到输出上限和明确的上游错误不会触发恢复。
 
 插件把已收到的思考作为检查点文本，与原始输入一起发起**一个新请求**，要求直接整理回答。
 这不是上游原生 resume，也不会重新播放已经显示的思考。恢复段关闭工具调用；已经输出
@@ -408,11 +448,8 @@ token，并非精确 tokenizer 校验。超限就停止恢复，不会无限续�
 | 客户端 bundle 热更 | 替换 `client.js` 后浏览器端由内核 client-hmr 自动重载（实测两次） |
 | 信任围栏 | 非 loopback Host / 跨站 `sec-fetch-site` / 异源 `Origin` 一律 403；无 cookie 回环请求 401（与内核 `/api` 一致） |
 | SSE 推送 | `hello`/`announcements`/`update`/`upgraded` 事件实测；热重载后自动重连 |
-| 思考强度传递 | 预算机制实测（2026-09，早于 effort-aware）：light/balanced/deep 的 reasoning 2048（被预算截断）/ 3386 / 3522，输出单调上升；2026-10 起 effort-aware 模型额外发送真实 `reasoning_effort`（见[为什么用预算，同时也发 reasoning_effort](#为什么用预算同时也发-reasoning_effort)） |
+| 思考强度传递 | light/balanced/deep 三档实测：reasoning 2048（被预算截断）/ 3386 / 3522，输出单调上升 |
 | 地区门 | 受限模型报 `REGION_BLOCKED` 并留在自己的分组 |
-| 门禁漂移 | `FreeTierError` / "only be used from within OpenCode" 归 `GATE_DRIFT` 而不是 `INVALID_CREDENTIAL`，且不在可重试集合里——重发同一个身份只会拿到同一个答案；判据不依赖 `status`，流内拒绝（`status` 为 `undefined`）同样命中。实测：`403 code=GATE_DRIFT type=FreeTierError`，地区与配额两支分类不变 |
-| 出站诊断开关 | `OUR_FREE_MODEL_DEBUG=1` 与 `~/.dsh/our-free-model/debug` 两条通路实测：开 → 逐条打印端点、`x-opencode-*` 门禁头、会话/请求 id、UA、声明的工具名与角色；关 → 零输出。轨迹里塞入机密串反查，0 命中 |
-| 上下文窗口 | 两个 Nemotron 原标 128 000，`dsh-compaction-basic` 据此在 `128000 × 0.8 = 102 400` 就触发压缩。大海捞针实测（码字放在第 1 条消息，另有"从未给出码字"的反向对照）：`nemotron-3-ultra-free` 在 **900 032** token 处完整召回、`nemotron-3.5-lightning-free` 在 **300 032** token 处完整召回，反向对照均不产出码字；pi-ai 注册表与 Zen 免费模型表分别记 1 000 000 / 262 144，与实测一致。已改为该两值，压缩阈值随之变成 800 000 / 209 715 |
 | 转发端口 | `/v1/models`、流式与非流式 `/v1/chat/completions`；无 Key 请求被拒 `401` |
 | 界面文案 | 无乱码；上游厂名只出现在仓库文档与公告正文两处——#8 要求的披露得有个用户看得见的位置，公告算说明位。模型选择器、设置页与报错文案里始终不出现 |
 
@@ -427,13 +464,15 @@ Tauri 通知通道存在，纯浏览器路径可用，被拒时设置页如实�
 - **"不限量"指的是没有额度这套东西**：不充值、不按 token 计费、没有套餐和用量面板。但这条车道按 session 记速率，短时间内打满会回 `429`。插件把该模型标成"已达限额"而不是隐藏，下一轮探测自动恢复。
 - **个别模型上游本身很慢**。`nemotron-3.5-lightning-free` 有一次实测首字超过 30 秒。这是上游延迟，看板会如实显示。
 - **输出速度有时会显示 `—`**。答案只落在一两个大帧里、或者思考过程根本不流式返回的模型，没有值得相除的时间窗。看板宁可空着，也不会把"想的时间"算成"写的速度"。
-- **自动恢复有次数、时间和上下文边界**。只恢复纯思考 EOF，最多追加一个请求；已有正文、工具调用、取消和明确错误不会恢复。它是用检查点重新请求，无法保留上游未发出的内部状态，也不能保证成功。缺失 usage 的用量仅为已知部分。
+- **思考是静默的等待，而且与正文共用输出预算**。实测 `mimo-v2.6-flash-free` 可以在思考阶段静默 60–70 秒，期间上游计费 3024 个 reasoning token 却一帧思考都不发；这种回合会以 `stop` 收尾而正文为空，客户端很容易报"空响应"。转发端点与局域网中继会用心跳把连接保活——但这救的是连接而不是超时：注释帧会被 SSE 解析器跳过，pi-ai 的空闲看门狗（`streamIdleTimeoutMs`，默认 300 秒）只有读到真实内容帧才会重置，链路滞留超过它仍会以 TIMEOUT 失败（实测时间线见 issue #34）。**预算**只有调用方给得出来：把单次输出上限提到 16k 以上，或改用模型卡里 `reasoning: false` 的模型。
+- **自动恢复有次数、时间和上下文边界**。只恢复纯思考 EOF 和纯思考空停（正常 stop 收尾但没有正文），最多追加一个请求；已有正文、工具调用、取消和明确错误不会恢复。它是用检查点重新请求，无法保留上游未发出的内部状态，也不能保证成功。缺失 usage 的用量仅为已知部分。
 - **能力只到探测能证明的程度**。公开清单和实测都拿不到证据的，就不标注。
 - **源码是明文 JavaScript**。作为本地插件必须如此。能拿到这个目录的人就能读懂网关逻辑——请把它当成这种分发形态的固有属性，而不是"混淆一下就能解决"的问题。
 - **桌面端安装需要真实目录**，原因见[安装](#安装)一节。
 - **升级与热重载的信任边界**：应用内升级的信任根自 v1.3.2 起是插件内 pin 的 Ed25519 公钥，而不是"HTTPS 到仓库"——清单必须带发布私钥的签名才可安装，镜像（含 jsDelivr）被投毒只会导致升级失败而不是代码被执行。能拿到**发布私钥**的人能推送任意代码，这与"能推送仓库的人"在信任模型上等同，但把"仓库账号被接管"从直接 RCE 降级成了"所有用户升级失败"。文件层面的完整性由签名+SHA-256 清单双重保障，代码层面的安全由客户端的白名单 HTML 渲染器与宿主的插件隔离承担。
 - **DSHEAC AIO 的 WebView2 权限策略可能拒绝通知授权**（本机实测 `denied`）。被拒时公告中心的开关会如实提示；纯浏览器访问 dsh web 不受影响。
-- **插件接口的鉴权取决于 composition**：挂了 connection 服务的 composition（dsh web、AIO 桌面端）下与内核 `/api` 同级（需要应用自己的 cookie/token）；没有 connection 服务的极简 composition 退回到结构化围栏（loopback + 同源检查），本机其它进程仍可访问——与内核在同类 composition 下的行为一致。
+- **转发端口不是"必须抢到 18899"**。端口被占时监听顺延到下一个可用端口，并把实际端口写回设置（设置页给出提示）。这是有意的：宁可换端口，也不让本地转发静默停摆；占用者是谁由操作系统的错误码决定，插件只如实转述它。
+- **插件接口的鉴权取决于 composition**：挂了 connection 服务的 composition（dsh web、AIO 桌面端）下与内核 `/api` 同级（需要应用自己的 cookie/token）；没有 connection 服务的极简 composition 退回到结构化围栏（loopback + 同源检查），本机其它进程仍可访问——与内核在同类 composition 下的行为一致。**这条同样适用于 `/forward/key` 与 `/forward/lan/key`**：在这类 composition 下，本机任意进程一条请求就能取走转发 Key 和局域网 Key，再从别的机器花掉本机的免费额度。使用这类 composition 时，这两把 Key 应当视作本机进程可读的文件（与 `settings.json` 同一信任级），需要更强隔离就在部署时挂上 connection 服务。
 
 ## 开发
 
@@ -452,7 +491,6 @@ node scripts/release-e2e.mjs        # 用真实的 feed/manifest.json 装一遍�
 node scripts/picker-test.mjs        # 选择器只广播真能用的模型，且永不广播空集合
 node scripts/tui-test.mjs           # 没有 web server 的 composition 里插件照样启动并出模型
 node scripts/host-selftest.mjs      # Host 半身端到端，会真实出网
-node scripts/reverify.mjs           # 门禁体检：目录 / 匿名门禁 / 逐模型三盏灯，门禁被改时退出码 1
 node scripts/build-manifest.mjs     # 发布：重新生成 feed/manifest.json（发布文件哈希清单）
 ```
 
@@ -465,33 +503,31 @@ node scripts/build-manifest.mjs     # 发布：重新生成 feed/manifest.json�
 `reasoning_effort` 空操作采样、预算方言、悬空工具调用、工具名字符集规则、
 原始读包时刻（`batch-delivery`）、逐帧到达与 usage 对照（`decode-window`）、
 长回答会不会被额度截断（`long-answer`）。
-它们现在**全部** import 本插件自己的 `src/upstream.js`（会话/请求 id 铸造、工具指纹、
-`CLIENT_UA`），从仓库根目录直接执行即可（`node scripts/probes/free-lane-survey.mjs`）。
-早先版本 import 的是一个仓库里并不存在的第三方 SSE 客户端目录，八个脚本一加载就
-`ERR_MODULE_NOT_FOUND`——恰好在上游改门禁、最需要它们的时候全部失效，所以现在连
-UA 也不再写死，而是用插件真实发出的那个 `CLIENT_UA`，探针测的身份就是真发的身份。
-它们都没有接进 `npm test`——那是取证记录，不是套件，而且会真实出网、花免费额度；
-`npm test` 跑的是上面这些不需要出网、不花免费额度的离线检查。
-
-### 出站诊断开关
-
-门禁再变的时候，唯一的自救手段是知道"到底发出去了什么"：
-
-```bash
-OUR_FREE_MODEL_DEBUG=1 dsh …       # shell / headless
-touch ~/.dsh/our-free-model/debug  # 桌面端没有 shell 环境可 export；建/删立即生效，不用重启
-```
-
-打开后每条出站请求往 stderr 打一行：端点、`x-opencode-*` 门禁头、会话/请求 id、
-最终 User-Agent、是否匿名，以及请求体的**形状**（模型、线协议、角色、声明的工具名、
-预算上限）。**不打**消息内容、system prompt、工具参数，也不打凭据——会泄漏东西的
-诊断开关只会教人一直开着它。要判断门禁改的是哪一条，看 `FAIL` 那一行的 `code` / `type`。
+其中六个跑的是本插件自己的代码，从仓库根目录就能执行
+（`node scripts/probes/pairing-repair.mjs`）；其余借助一个第三方 SSE 客户端直连上游，
+模块路径写成了那个仓库的样子，所以只作为取证记录保留，不能当测试套件用。
+它们都没有接进 `npm test`——那是取证记录，不是套件；`npm test` 跑的是上面这些不需要
+出网、不花免费额度的离线检查。
 
 需要 Node `^22.19.0 || >=24.0.0`。无安装步骤、无依赖。
 
 ```bash
 npm run typecheck                 # tsc --noEmit，严格检查 adapter/ 接缝（可选：需要 typescript）
 ```
+
+## EAC 渠道（桌面端专属）
+
+除免费车道外，插件内置一条协付渠道（EAC）。它**只在两个桌面宿主里存在**：
+
+- **DSHEAC AIO**（Tauri 壳）：内核路径、内嵌 node、`web-desktop` profile 三重信号同时命中才解锁；
+- **DeepSeek Harness 桌面端**（Electron 壳）：内核自身提供的 `desktop` profile 上下文（CLI 按设计拒绝这个 profile）加上桌面壳给内核进程打的运行标记。
+
+命令行、纯 `dsh web`、以及任何其它运行方式里，这条通道**整体不存在**：没有模型、没有请求、没有报错，连解密尝试都不会发生。
+
+- **显示规则**：模型名只显示模型本名并带渠道前缀，如 `EAC DeepSeek V4.1 Flash`、`EAC Kimi K3`；设置页的模型卡上另有独立的 `EAC` 渠道徽章。
+- **加密密封**：渠道凭据与端点从不以可读形式出现在插件里——它们只以 AES-256-GCM 密文存在，解开密文的密钥由分散在两个文件中的三片掩码分片在解锁时即时派生；非授权宿主不进派生路径，密文对所有搜索引擎和字符串扫描都只是噪声。
+- **凭据不落盘、不出进程**：解锁按请求即时发生，明文只活在构造请求的那一帧里，不写文件、不进日志、不出现在任何 API 响应或错误消息中。
+- **签名网关（推荐形态）**：`worker/` 目录附带一个 Cloudflare Worker 网关——插件密封的只有网关地址与 HMAC 签名密钥，请求按 `时间戳 + HMAC-SHA256(方法/路径/ body 摘要)` 签名，中继的真实 key 只存在 Worker 的环境变量里；防重放时间窗、模型白名单、可选按 IP 限速都在网关执行，签名密钥泄露只需在网关侧轮换即全体吊销。部署与轮换见 `worker/README.md`。
 
 ## 上游是哪些源
 
@@ -509,7 +545,7 @@ npm run typecheck                 # tsc --noEmit，严格检查 adapter/ 接缝�
 
 关于隐私与信任，把话说清楚：
 
-- **没有号池、没有中转、没有二道贩子**。当前版本不存在第二条车道，上表四行就是这个插件会出网的全部目标；`npm test` 的离线套件一步不出网，只有 `scripts/host-selftest.mjs`、`scripts/reverify.mjs` 与 `scripts/probes/` 会主动去打这些地址，而它们要人手动运行。将来若加入新的来源，这一节会先于功能更新，不会默认把流量分给别人。
+- **没有号池、没有中转、没有二道贩子**。当前版本不存在第二条车道，上表四行就是这个插件会出网的全部目标；`npm test` 的离线套件一步不出网，只有 `scripts/host-selftest.mjs` 与 `scripts/probes/` 会主动去打这些地址，而它们要人手动运行。将来若加入新的来源，这一节会先于功能更新，不会默认把流量分给别人。
 - **你的 prompt、工具结果与随附图像会作为正常推理请求发给这个上游**——与调用任何一家模型 API 没有区别。除此之外插件不上传任何东西：用量看板的数据、设置、转发 Key 全部只落在本机 `DSH_HOME/our-free-model/`。
 - **免密不等于无人管**：这条车道靠 `x-opencode-*` 指纹识别客户端、按会话计免费额度，会因地区回 403、因超量回 429。模型集合与额度政策由上游决定，随时可能变化；插件能做的只是如实把不可用从选择器里摘掉。
 - 这一节是仓库文档。应用内的选择器、设置页与报错文案仍然不出现上游厂名（那条约定见[验收情况](#验收情况)）。
@@ -518,11 +554,12 @@ npm run typecheck                 # tsc --noEmit，严格检查 adapter/ 接缝�
 
 - 所有状态写在 `DSH_HOME/our-free-model/`；用量与设置只落本地，不上传任何地方。
 - 转发监听**只绑回环地址**，默认 `127.0.0.1`，无 Key 请求一律拒绝。把地址改成可路由接口会被直接拒绝（`POST /settings` 回 400 并写明原因；没有 web server 的 composition 里手工写进 `settings.json` 也一样不起监听）——这一格流量花的是本机这条免密车道，不该由一个字符串决定要不要给整个子网用。
+- **局域网访问是另开的一扇门，不是放宽上面那条规则**：本机监听照旧只绑回环、改地址照旧被拒；要跨机器用必须显式打开"局域网访问"，中继绑可路由地址，并且**每个请求都要局域网 Key**——连 `/`、`/health` 这类存活探针也一并鉴权（只有本机监听才免 Key 回答存活），否则一个未鉴权的应答就等于把"这台机器在代理"告诉整个子网。中继只转发 `/v1/models`、`/v1/chat/completions`、`/v1/responses` 三条白名单路径，不是任意 loopback 服务的通用代理；进门时把局域网 Key 换成本机 Key，因此两把 Key 互不通用；带跳数标记的请求直接拒（`508`），所以端口就算配成本机监听同一个也不会自己打转。局域网 Key 同样由 `crypto` 生成、`timingSafeEqual` 比对、落在同一个 `0600` 文件里，可在面板上单独轮换。
 - 转发 Key 由 `crypto` 运行时生成、用 `timingSafeEqual` 比对、存在 `0600` 文件里。本仓库不含任何硬编码凭据。`/` 与 `/health` 是存活探针，先于 Key 检查应答，但只回答"在不在"，模型清单要 Key。
 - 插件的 HTTP 路由带**请求信任围栏**（v1.1 起修复）：插件的 `/api/our-free-model` 前缀在 webServer 的最长前缀分发下优先于内核 `/api`，曾绕过内核鉴权。现在每个请求先走 composition 的 `connection` 服务准入（与内核 `/api` 完全同级的 cookie/token 校验）；connection 缺席的 composition 退回结构化围栏——loopback Host、拒绝跨站 `sec-fetch-site`、`Origin`/`Referer` 必须与 Host 同源同端口，**Host 缺失或为空也拒**（fail closed，不退回 socket 本地地址）。实测：异源 Host/Origin 403，无 cookie 回环请求 401。`connection` 是逐请求取的，因为浏览器半身要到插件加载之后才把它 provide 出来——快照式地在 apply 时读一次，围栏会整轮进程退化成结构化那一层（本轮把这条读取改回快照，picker-test 的 401 断言当场变红）。
 - **公告 HTML 在客户端经严格白名单渲染**：`scripts/sanitize-test.mjs` 用 XSS 语料（脚本注入、事件属性、`javascript:`/`data:` URL、iframe/svg/form、样式注入、畸形标签）验证全部丢弃；不经过任何 `innerHTML` sink。公告源的 `feedUrl` 可被用户改指向任意 URL，因此渲染器按不可信输入对待。
 - **应用内升级的完整性链（v1.3.2 加签）**：清单 Ed25519 签名验证（公钥 pin 在 `src/updater.js`，无签名/验签失败的清单直接拒绝，未签名镜像不会被安装）→ 清单校验（semver、路径逃逸、哈希格式、`base` 必须是清单相对路径）→ 下载逐文件 SHA-256 + 字节数 → staging 回读校验 → 安装后回读校验 → 任一步失败恢复备份；安装前强制重新拉取清单，杜绝陈旧清单。文件与代码边界见[已知边界](#已知边界)。
-- **更新通道与 `feedUrl` 彻底解耦**（v1.3.2）：`feedUrl` 只重定向公告 feed，永远不再重定向升级清单——此前一个设置项就能把升级源指到任意服务器并配上自配平的哈希，等价于把"改一个设置值"升级成"在宿主进程里执行任意代码"。公告 override 本身也收紧为仅 https（回环 http 除外，本机镜像与测试仍可用）且不得内嵌凭据。
+- **更新通道与 `feedUrl` 彻底解耦**（v1.3.2）：`feedUrl` 只重定向公告 feed，永远不再重定向升级清单——此前一个设置项就能把升级源指到任意服务器并配上自配平的哈希，等价于把"改一个设置值"升级成"在宿主进程里执行任意代码"。公告 override 本身也收紧为仅 https（回环 http 除外，本机镜像与测试仍可用）且不得内嵌凭据。**目标域不受限**：任何 https 地址都可以作为 `feedUrl`，插件按 `feedPollMinutes` 的间隔轮询它——因此在没有 connection 服务的 composition 里（见上面的鉴权说明），能改设置的本机调用者可以让进程持续请求任意外部地址。这与插件的其余外联一样按"设置即信任"对待：能改 `settings.json` 的人本来就能装代码。
 - **转发监听只绑回环地址，且按解析结果绑定**（v1.3.2）：`localhost` 这类主机名先经 `dns.lookup` 解析、全部结果都是回环才放行，绑定用解析出的 IP——hosts 文件或企业 DNS 把 `localhost` 指到可路由接口时，校验与监听不再各说各话。
 - 卸载只需移除 bundle 条目，插件不留任何补丁；它的数据目录是纯 JSON，可直接删除。
 

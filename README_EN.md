@@ -10,17 +10,20 @@
   <img alt="build step" src="https://img.shields.io/badge/build%20step-none-7da1de?style=flat-square">
   <img alt="dsh kernels" src="https://img.shields.io/badge/dsh-0.1.5--0.1.7--rc.2-2f6f4f?style=flat-square">
   <img alt="status" src="https://img.shields.io/badge/status-beta-f0a441?style=flat-square">
+  <br>
+  <a href="https://trendshift.io/repositories/261203"><img alt="Trendshift #7 JavaScript Repository Of The Day" src="https://trendshift.io/api/badge/trendshift/repositories/261203/daily?language=JavaScript"></a>
+  <a href="https://trendshift.io/repositories/261203"><img alt="Trendshift #12 JavaScript Repository Of The Week" src="https://trendshift.io/api/badge/trendshift/repositories/261203/weekly?language=JavaScript"></a>
 
 </div>
 
 <div align="center">
 
 > All you do is install this plugin in dsh — no login, no sign-up, no API key, no other
-> step of any kind. The frontier models are simply there, Muse Spark 1.3 and MiMo V2.6
-> among them. Completely free, with no usage cap.
+> step of any kind. The frontier models are simply there, DeepSeek V4.1 Flash and
+> Kimi K3 among them. Completely free, with no usage cap.
 >
 > 你只需在 dsh 里装上这个插件，无需登录、注册、填 API Key 或任何其它操作，就能用上包括
-> Muse Spark 1.3、MiMo V2.6 在内的前沿模型——完全免费，不限量。
+> DeepSeek V4.1 Flash、Kimi K3 在内的前沿模型——完全免费，不限量。
 >
 > The roster follows upstream, availability is measured from **your own** network
 > egress, the thinking-effort control sends a real budget instead of a prompt hint, and

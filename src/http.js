@@ -23,7 +23,6 @@
  */
 
 import { CLIENT_UA, UPSTREAM_BASE, gatewayHeaders, truncateSession } from './upstream.js'
-import { describeBody, trace } from './debug.js'
 import { egressFetch } from './egress.js'
 
 /** Harness-neutral failure codes (packages/llm/llm/src/error.ts vocabulary; CLIENT_ERROR extends it like CONFIG_DISABLED does). */
@@ -31,16 +30,6 @@ export const CODE = {
   region: 'REGION_BLOCKED',
   quota: 'RATE_LIMIT',
   credential: 'INVALID_CREDENTIAL',
-/**
-   * The anonymous lane refused the *client identity*, not the model and not a
-   * credential: `FreeTierError` / `MissingSessionID` / "only be used from
-   * within OpenCode". Folding this into `credential` was wrong twice over — the
-   * lane has no per-user credential to be invalid, and DSH routes codes rather
-   * than message text, so a gate change is only ever one upstream decision away
-   * from being reported as "your key is bad". It is not retryable: the next
-   * attempt sends the same identity and gets the same answer.
-   */
-  gate: 'GATE_DRIFT',
   // The co-paid lane's per-user gate (GitHub login + star): the credential
   // store is fine and the endpoint is reachable — this install just has not
   // been authorized yet. Its own code keeps it out of INVALID_CREDENTIAL, so
@@ -58,9 +47,6 @@ export const CODE = {
   empty: 'EMPTY_RESPONSE',
   aborted: 'ABORTED',
 }
-
-/** Appended to a gate refusal so the operator knows which lever to pull. */
-const GATE_GUIDANCE = ' — the anonymous free lane rejected this client identity (upstream changed the gate; this is not an API key problem). Wait for a plugin update, or re-check with scripts/reverify.mjs'
 
 export class UpstreamError extends Error {
   constructor(message, code, details = {}) {
@@ -122,7 +108,7 @@ export function classifyFailure(status, payload, retryAfterMs) {
   if (status === 429 || type === 'FreeUsageLimitError' || /usage limit|rate limit/i.test(flat)) {
     return new UpstreamError(message, CODE.quota, { status, type, providerRetryAfterMs: retryAfterMs })
   }
-// The gateway rejects a signature only when the bytes it received differ from
+  // The gateway rejects a signature only when the bytes it received differ from
   // the bytes that were signed — the credential itself is fine. On this lane
   // the usual cause is a local proxy plugin rewriting the body after signing
   // (issue #50), so it is neither INVALID_CREDENTIAL (users chase re-login and
@@ -132,12 +118,6 @@ export function classifyFailure(status, payload, retryAfterMs) {
     return new UpstreamError(
       'the gateway rejected the request signature — the request body was modified in transit; if a local proxy plugin (e.g. billion-context) is installed, disable it for this lane or enable its passthrough for signed requests',
       CODE.transport, { status, type, signatureRejected: true })
-  }
-// Deliberately status-independent: a refusal can arrive inside a 200 stream,
-  // where `status` is not yet known (`stream.js` calls this with `undefined`).
-  if (type === 'FreeTierError' || type === 'MissingSessionID'
-    || /only be used|free tier can only/i.test(flat)) {
-    return new UpstreamError(`${message}${GATE_GUIDANCE}`, CODE.gate, { status, type })
   }
   // The co-paid lane's per-user gate speaks before any credential is judged:
   // the gateway refuses a turn because this install has not completed GitHub
@@ -220,6 +200,9 @@ export function sniffBody(text) {
  * cancel on the way out discards everything already read — a complete turn,
  * reported as a retryable timeout. Frames arrive as they are read, so the first
  * token is not held back for the rest of the sniff window either.
+ *
+ * Exported for the co-paid lane's poster (`src/eac.js`), which shares the sniff
+ * discipline but not the headers.
  *
  * @param {ReadableStream} stream
  * @param {number} limit
@@ -313,7 +296,7 @@ async function headRead(reader, signal, deadline) {
 
 /**
  * Turn a head that was already read, plus the reader that follows it, back into
- * one byte stream.
+ * one byte stream. Shared with the co-paid lane's poster (`src/eac.js`).
  */
 export function replayStream(head) {
   const stream = (async function* () {
@@ -402,17 +385,6 @@ function userAgentWith(attribution) {
 export async function postStreamed({ path, body, session, requestId, attributionUserAgent, signal, onData, timeoutMs = 300000 }) {
   const headers = gatewayHeaders({ session: truncateSession(session), requestId, stream: true })
   headers['user-agent'] = userAgentWith(attributionUserAgent)
-  const startedAt = Date.now()
-  trace('POST', {
-    path,
-    session: headers['x-opencode-session'],
-    requestId: headers['x-opencode-request'],
-    client: headers['x-opencode-client'],
-    project: headers['x-opencode-project'],
-    userAgent: headers['user-agent'],
-    anonymous: headers.authorization === 'Bearer public',
-    body: describeBody(body),
-  })
   let response
   try {
     response = await egressFetch(`${UPSTREAM_BASE}${path}`, { method: 'POST', headers, body: JSON.stringify(body), redirect: 'error', signal })
@@ -420,20 +392,16 @@ export async function postStreamed({ path, body, session, requestId, attribution
     // The signal's own reason is what fetch rejects with, and Node's is a
     // `TimeoutError`/user Error rather than `AbortError` — testing the name alone
     // reported a cancelled turn as `TRANSPORT`, which is retryable.
-    trace('ERR', { path, ms: Date.now() - startedAt, code: signal?.aborted === true || error?.name === 'AbortError' ? CODE.aborted : CODE.transport, reason: String(error?.message ?? error).slice(0, 200) })
     if (signal?.aborted === true || error?.name === 'AbortError') throw new UpstreamError('request aborted', CODE.aborted)
     throw new UpstreamError(`our-free-model: upstream request failed: ${error?.message ?? error}${transportCause(error)}`, CODE.transport)
   }
 
   const setRetry = retryAfter(response.headers.get('retry-after'))
-  trace('RES', { path, status: response.status, ms: Date.now() - startedAt, ...(setRetry === undefined ? {} : { retryAfterMs: setRetry }) })
   if (!response.ok) {
     const text = await response.text().catch(() => '')
     let payload
     try { payload = JSON.parse(text) } catch { payload = { error: { message: text.slice(0, 300) || `HTTP ${response.status}` } } }
-    const failure = classifyFailure(response.status, payload, setRetry)
-    trace('FAIL', { path, status: failure.status, code: failure.code, type: failure.type })
-    throw failure
+    throw classifyFailure(response.status, payload, setRetry)
   }
   if (response.body === null) throw new UpstreamError('our-free-model: upstream returned no body', CODE.empty)
 
@@ -566,16 +534,11 @@ export async function getJson(path, { session, requestId, attributionUserAgent, 
   const onCallerAbort = () => { callerAborted = true; controller.abort() }
   signal?.addEventListener('abort', onCallerAbort, { once: true })
   try {
-const response = await egressFetch(`${UPSTREAM_BASE}${path}`, { headers, redirect: 'error', signal: controller.signal })
-    trace('GET', { path, status: response.status })
+    const response = await egressFetch(`${UPSTREAM_BASE}${path}`, { headers, redirect: 'error', signal: controller.signal })
     const text = await response.text()
     let payload
     try { payload = JSON.parse(text) } catch { payload = { error: { message: text.slice(0, 200) } } }
-    if (!response.ok) {
-      const failure = classifyFailure(response.status, payload)
-      trace('FAIL', { path, status: failure.status, code: failure.code, type: failure.type })
-      throw failure
-    }
+    if (!response.ok) throw classifyFailure(response.status, payload)
     return payload
   } catch (error) {
     if (error instanceof UpstreamError) throw error

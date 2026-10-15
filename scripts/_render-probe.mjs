@@ -128,11 +128,12 @@ new Function('window', 'document', 'navigator', source)(globalThis.window, globa
 const registered = globalThis.__registered
 const exports = registered.factory(name => {
   if (name === 'react') return stubReact
+  if (name === 'react-dom') return { createPortal: (children, container) => ({ __el: true, type: 'portal', props: { container }, children: [children] }) }
   throw new Error(`asked for ${name}`)
 })
 
 const sections = []
-// The shell-side connection service, serving the jet-hub RPC with the same
+// The shell-side connection service, serving the channel-pack RPC with the same
 // shapes the real host answers (structured address/apiKey, ledger trees...).
 const rpcMethods = {
   'gateway.getEnabled': {
@@ -165,7 +166,7 @@ const ctx = {
   connection: {
     rpc: {
       call: (mount, endpoint, payload) => {
-        if (mount !== '/api' || endpoint !== 'jet-hub') return Promise.resolve({ ok: false, error: { message: 'unknown endpoint' } })
+        if (mount !== '/api' || endpoint !== 'channel-pack') return Promise.resolve({ ok: false, error: { message: 'unknown endpoint' } })
         const value = rpcMethods[payload?.method]
         return value === undefined
           ? Promise.resolve({ ok: false, error: { code: 'no-handler', message: `probe has no stub for ${payload?.method}` } })

@@ -26,17 +26,8 @@ const ALWAYS_FREE = new Set(['union-alpha', 'space-bunny-free', 'big-pickle'])
 
 /**
  * Free-lane ids that are **not** chat models, and must never reach the picker.
- *
- * Jev is a "System One" structured-decision model from TypeSafe AI: instead of
- * generating text it evaluates a `state` against typed questions and returns
- * values with probabilities. Zen serves it at `/zen/v1/systemone`, not the chat
- * endpoint — measured 2026-10-01 on this egress: `/systemone` answers 200 with a
- * real answer in ~1 s, while `/chat/completions` answers `500 Internal server
- * error` every single time. It was sitting in the picker as a model that could
- * never complete a turn.
- *
- * It is still free and still usable — just through a tool rather than the model
- * selector. `dsh-jev-decide` exposes it that way.
+ * Hitting their chat endpoint fails every turn; they are excluded defensively
+ * in case they reappear in an upstream catalog.
  */
 const NON_CHAT_MODELS = new Set(['jev-1.13', 'jev-1.13-free'])
 
@@ -103,7 +94,6 @@ export const CAPABILITIES = [
   // reasoning_effort 值（effort.js EFFORT_WIRE），从而触发真正的深度推理；
   // 否则该模型只回"复述用户输入"的伪推理，且 OFM 解析器拿不到标准字段。
   { match: /^fledge/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072, canDisableThinking: false, effortAware: true },
-  { match: /^jev/, vision: false, reasoning: false, contextWindow: 32768, maxOutput: 4096 },
 ]
 
 /** Human-facing display names, so a raw upstream id never reaches the picker. */
@@ -120,7 +110,6 @@ const DISPLAY_NAMES = {
   'deepseek-v4-flash-free': 'DeepSeek V4 Flash',
   'deepseek-v4.1-flash-free': 'DeepSeek V4.1 Flash',
   'glm-5.3-flash-free': 'GLM 5.3 Flash',
-  'jev-1.13-free': 'Jev 1.13',
   'big-pickle': 'Big Pickle',
 }
 

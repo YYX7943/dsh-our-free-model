@@ -187,8 +187,11 @@ const FREE_ID_OVERRIDES = {
   },
   // models.dev: 1M window, 131072 output, reasoning_options `toggle` only →
   // no level menu, so the free lane's token ladder applies.
+  // 本地实测（2026-10-02）：longcat 图片输入返回 200 且正确识别（优化 #3），
+  // 故 vision 保留 true（上游 channel-pack 实测 image 500，本地不受影响）。
+  // contextWindow 用 1000000（与优化 #3 的 /^longcat/ 规则一致）。
   'longcat-2.5-preview-free': {
-    vision: false, contextWindow: 1048576, maxOutput: 131072,
+    vision: true, contextWindow: 1000000, maxOutput: 131072,
   },
   // models.dev: 200000/32000, no reasoning_options. The lane accepted a
   // 265360-token prompt, so the window is the served one.

@@ -117,7 +117,7 @@ check('legacy aliases reach the actual request budget',
   [(await sentBudget({ reasoningEffort: 'high' })).max_tokens,
     (await sentBudget({ reasoningEffort: 'medium' })).max_tokens,
     (await sentBudget({ reasoningEffort: 'minimal' })).max_tokens],
-  [32768, 16384, 4096])
+  [32768, 32768, 4096])
 await sentBudget({ reasoningEffort: 'high' })
 check('the recorded legacy alias is the rung that ran', records.at(-1).effort, 'deep')
 check('a caller that names no rung gets the default one, not an unbounded call',

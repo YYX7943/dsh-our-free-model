@@ -136,9 +136,8 @@ check('a rung the plugin does not declare is recorded as the default it became',
 // channels use. A model with no declared set keeps the ladder untouched.
 const DS = catalog('deepseek-v4.1-flash-free')
 const GLM = catalog('glm-5.3-flash-free')
-// 本地约定（2026-10-19）：deepseek-v4.1-flash-free 的 contextWindow 用真实值 200000，
-// 不是上游的 1M（过大的窗口会让压缩阈值过高，超长对话在真实上限处出错）。
-check('the served capacity is the local 200K window, not the upstream 1M', DS.contextWindow, 200000)
+// 2026-10-19 用户确认跟随官方：deepseek 用 1M（曾短暂用 200000，已改回）。
+check('the served capacity is the measured 1M window, not the published floor', DS.contextWindow, 1048576)
 check('and the same for glm', GLM.contextWindow, 1048576)
 check('deepseek declares its own level menu', DS.efforts, ['disabled', 'low', 'high', 'max'])
 check('glm declares only the levels it honours — no Off rung', GLM.efforts, ['low', 'high', 'max'])

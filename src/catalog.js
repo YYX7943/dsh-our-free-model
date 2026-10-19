@@ -159,10 +159,9 @@ export const CAPABILITIES = [
  */
 const FREE_ID_OVERRIDES = {
   // models.dev: effort low|high|max; limit 200000/32000 (floor — see above).
-  // 本地实测（2026-10-19）：contextWindow 用真实值 200000（不要放大成 1M——
-  // 过大的 contextWindow 会让 DSH 压缩阈值过高，超长对话在真实上限处出错）。
+  // contextWindow 跟随官方：1048576（2026-10-19 曾短暂用 200000，用户确认官方 1M 后改回）。
   'deepseek-v4.1-flash-free': {
-    vision: true, contextWindow: 200000, maxOutput: 384000,
+    vision: true, contextWindow: 1048576, maxOutput: 384000,
     efforts: ['disabled', 'low', 'high', 'max'], effortDefault: 'high',
     effortPatch: { reasoning_effort: '$effort' },
     effortOffPatch: { reasoning_effort: 'none' },

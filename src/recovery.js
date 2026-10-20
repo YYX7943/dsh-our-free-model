@@ -43,6 +43,34 @@ export function canRecoverSilentStop(outcome, policy, elapsedMs) {
   return outcome.sawFinish === true && recoverable(outcome, policy, elapsedMs)
 }
 
+/**
+ * 剥离历史里的工具上下文（tool-call 块、tool 消息、tool-result 块）。
+ *
+ * 本地修复（2026-10-20）：续写（recovery/continuation）的目的是继续生成正文，
+ * 历史里残留的工具调用会让模型（尤其 deepseek 思考模式）在续写时再次发起
+ * 工具调用（报 "continuation unexpectedly requested a tool"）。续写前把工具
+ * 上下文清掉，模型只看到纯对话历史，不会再尝试调用工具。
+ */
+function withoutToolContext(messages) {
+  const out = []
+  for (const message of messages ?? []) {
+    if (message?.role === 'tool') continue
+    const blocks = Array.isArray(message?.content) ? message.content : null
+    if (blocks !== null && blocks.length > 0) {
+      const filtered = blocks.filter(block => block?.type !== 'tool-call'
+        && block?.type !== 'tool-result'
+        && block?.type !== 'tool-call-id')
+      if (filtered.length !== blocks.length) {
+        if (filtered.length === 0 && (message.role === 'assistant' || message.role === 'user')) continue
+        out.push({ ...message, content: filtered })
+        continue
+      }
+    }
+    out.push(message)
+  }
+  return out
+}
+
 export function recoveryMessages(messages, checkpoint) {
   const instruction = 'The previous response was interrupted before its final answer. '
     + 'Complete the original task using the conversation above. '
@@ -59,7 +87,7 @@ export function recoveryMessages(messages, checkpoint) {
     + 'never claim an external action was executed. '
     + 'Do not merely summarize the interruption or promise to continue.\n\n'
     + `Interrupted analysis checkpoint:\n${JSON.stringify(checkpoint)}`
-  return [...messages, { role: 'user', content: [{ type: 'text', text: instruction }] }]
+  return [...withoutToolContext(messages), { role: 'user', content: [{ type: 'text', text: instruction }] }]
 }
 
 /**
@@ -72,7 +100,7 @@ export function recoveryMessages(messages, checkpoint) {
  */
 export function continuationMessages(messages, partialAnswer) {
   const trimmed = typeof partialAnswer === 'string' ? partialAnswer.trim() : ''
-  const history = trimmed === '' ? messages : [...messages, { role: 'assistant', content: trimmed }]
+  const history = trimmed === '' ? withoutToolContext(messages) : [...withoutToolContext(messages), { role: 'assistant', content: trimmed }]
   const instruction = 'You reached the output token limit and your answer was cut off mid-way. '
     + 'Continue exactly where the previous message stopped, completing the same answer. '
     + 'Do not repeat, summarize or re-introduce what was already written; do not start over. '

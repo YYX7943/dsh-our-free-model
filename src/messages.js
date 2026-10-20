@@ -224,6 +224,7 @@ export function toChatMessages(messages, resolveImage, warnings) {
       case 'assistant': {
         const text = textOf(blocks)
         const calls = []
+        let reasoning = ''
         for (const block of blocks) {
           if (block?.type === 'tool-call') {
             calls.push({
@@ -231,10 +232,19 @@ export function toChatMessages(messages, resolveImage, warnings) {
               type: 'function',
               function: { name: String(block.name ?? ''), arguments: typeof block.arguments === 'string' ? block.arguments : '{}' },
             })
+          } else if (block?.type === 'reasoning' || block?.type === 'thinking') {
+            reasoning += String(block.text ?? block.thinking ?? '')
           }
         }
-        if (!text && calls.length === 0) break
+        // 本地修复（2026-10-20）：DeepSeek 思考模式要求续写时把上一轮的
+        // reasoning_content 原样传回（400 "must be passed back"）。channel-pack
+        // 对 deepseek-v4-flash/pro 已做同样处理；这里覆盖免费车道 chat 端点。
+        // 无推理时不带字段，不影响非思考模型。
+        if (typeof message?.reasoning_content === 'string' && reasoning === '') reasoning = message.reasoning_content
+        if (typeof message?.reasoning === 'string' && reasoning === '') reasoning = message.reasoning
+        if (!text && calls.length === 0 && reasoning === '') break
         const entry = { role: 'assistant', content: text || null }
+        if (reasoning !== '') entry.reasoning_content = reasoning
         if (calls.length > 0) entry.tool_calls = calls
         out.push(entry)
         break

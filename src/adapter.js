@@ -554,9 +554,11 @@ export class FreeModelAdapter {
             if (options.signal?.aborted === true) throw new UpstreamError('request aborted', CODE.aborted)
             const chunk = row.value
             if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.trim() !== '') sawAnswer = true
-            // 续写禁用工具；网关不遵守时也不把工具块交给宿主执行。
+            // 续写禁用工具：recoveryMessages/continuationMessages 已剥离工具上下文，
+            // 若网关仍发起工具调用（如门禁注入官方工具），丢弃工具块继续等正文，
+            // 不再 STREAM_CUT 打断（本地修复 2026-10-20）。
             if (recovering && (chunk.blockType === 'tool-call' || chunk.type === 'tool-call-delta' || chunk.block?.type === 'tool-call')) {
-              throw new UpstreamError('our free model continuation unexpectedly requested a tool', 'STREAM_CUT')
+              continue
             }
             if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta' || chunk.type === 'tool-call-delta') {
               delivered = true

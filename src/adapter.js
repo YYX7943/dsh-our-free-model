@@ -401,10 +401,10 @@ export class FreeModelAdapter {
       // 403 FreeTierError（旧实现靠它压住工具调用）。压制手段改为续写指令本身
       // ——`recoveryMessages()` 的正文里已经写着「Do not call tools」，这条提示
       // 是 v1 时代就有的，不依赖 tool_choice。
-// Fledge 等 effort-aware 免费模型：把 OFM 的 effort 等级映射成网关真正
-      // 认识的 reasoning_effort 字段。不带该字段时 fledge 只回"复述用户输入"
-      // 的伪推理，且推理内容走 reasoning_content 字段；带 low/high/max 才做
-      // 真正的深度推理。
+// effort-aware 免费模型（mimo / nemotron / space-bunny，2026-10-02 实测）：
+      // 把 OFM 的 effort 等级映射成网关真正认识的 reasoning_effort 字段。不带该字段时
+      // 这些模型只回"复述用户输入"的伪推理，且推理内容走 reasoning_content 字段；
+      // 带 low/high/max 才做真正的深度推理。
       if (wire === 'chat' && entry.effortAware === true) {
         const wireEffort = EFFORT_WIRE[resolveLevel(options.reasoningEffort, entry)?.id]
         if (wireEffort) payload.reasoning_effort = wireEffort

@@ -40,7 +40,7 @@ const DEFAULTS = 32768
 check('the catalog still records that mimo cannot think nothing', MIMO.canDisableThinking, false)
 check('muse spark can', MUSE.canDisableThinking, true)
 check('effortAware survives buildCatalog (mimo)', MIMO.effortAware, true)
-check('effortAware survives buildCatalog (fledge)', catalog('fledge-alpha-free').effortAware, true)
+check('effortAware survives buildCatalog (nemotron)', catalog('nemotron-3-ultra-free').effortAware, true)
 check('a non-effort-aware model carries no flag', UNION.effortAware, false)
 
 // ── the ladder as the settings page and the picker see it ────────────────────

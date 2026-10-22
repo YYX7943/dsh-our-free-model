@@ -104,13 +104,9 @@ export const CAPABILITIES = [
   // 该模型当前在免费通道已停服（Model is unavailable），由可用性探测从选择器移除；
   // 若回归，参数即按真实规格生效。
   { match: /^deepseek/, vision: false, reasoning: true, contextWindow: 200000, maxOutput: 128000 },
-  // Fledge（2026-10 新模型，Lab 未知）：models.dev 记录 1M / 131072 且 input 含 image；
-  // 2026-10-02 实测视觉可用（正确读出图片文字/颜色/形状）。实测只接受
-  // reasoning_effort = ["low","high","max"]（"none"/"minimal"/"medium"/"xhigh" 均 400），
-  // 思考不能关。effortAware 标记让 adapter 把 OFM 的 light/balanced/deep 映射成上游
-  // reasoning_effort 值（effort.js EFFORT_WIRE），从而触发真正的深度推理；
-  // 否则该模型只回"复述用户输入"的伪推理，且 OFM 解析器拿不到标准字段。
-  { match: /^fledge/, vision: true, reasoning: true, contextWindow: 1048576, maxOutput: 131072, canDisableThinking: false, effortAware: true },
+  // Fledge（2026-10 新模型，Lab 未知）已从上游目录移除（registry 无该记录，规则永不匹配），
+  // 其本地条目于 2026-10-22 清理。若上游日后恢复该模型，按当时的实测重新加入：
+  // 1M / 131072、视觉可用、effort 只接受 low/high/max（"none"/"minimal"/"medium"/"xhigh" 均 400）。
 ]
 
 /**

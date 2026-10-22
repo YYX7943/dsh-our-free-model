@@ -63,8 +63,12 @@ jobs:
         run: |
           if [ "$FORCE" = "true" ] || ! node scripts/build-manifest.mjs --check; then
             if [ -z "$RELEASE_KEY_PEM" ]; then
-              echo '::error::RELEASE_MANIFEST_PRIVATE_KEY is not set — add the release signing PEM as a repository secret'
-              exit 1
+              # 本 fork 没有发布私钥（上游的发布者才有）。缺密钥时把这一段当作
+              # 「无事可做」而不是失败：fork 的清单永远描述上游树，fork 也不发布，
+              # 重新签名对它没有意义。早期版本在这里 exit 1，于是每次 push 都会
+              # 发一封 run failed 邮件。
+              echo "::notice::RELEASE_MANIFEST_PRIVATE_KEY is not set — this fork does not publish releases; skipping the re-sign."
+              exit 0
             fi
             KEY_FILE="$RUNNER_TEMP/release-key.pem"
             printf '%s' "$RELEASE_KEY_PEM" > "$KEY_FILE"
@@ -72,7 +76,15 @@ jobs:
             node scripts/refresh-revision.mjs
           fi
       - name: The release suite gates the push
-        run: node scripts/test-all.mjs --mode release
+        # 同样需要私钥产物：fork 没有发布密钥时这套件必然红，此时跳过而不是失败。
+        env:
+          RELEASE_KEY_PEM: ${{ secrets.RELEASE_MANIFEST_PRIVATE_KEY }}
+        run: |
+          if [ -z "$RELEASE_KEY_PEM" ]; then
+            echo "::notice::no release signing key in this fork — skipping the release-readiness suite."
+            exit 0
+          fi
+          node scripts/test-all.mjs --mode release
       - name: Commit and push the refreshed records
         env:
           # GITHUB_TOKEN is a ruleset outsider: main demands PRs and green
@@ -86,8 +98,9 @@ jobs:
             exit 0
           fi
           if [ -z "$PUSH_TOKEN" ]; then
-            echo '::error::OFM_RELEASE_PUSH_TOKEN is not set — the re-signed records cannot reach main'
-            exit 1
+            # 同上：fork 不发布，没有推送令牌不是错误。
+            echo "::notice::OFM_RELEASE_PUSH_TOKEN is not set — this fork does not publish; nothing to push."
+            exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

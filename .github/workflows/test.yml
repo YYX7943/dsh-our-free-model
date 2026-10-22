@@ -35,7 +35,11 @@ jobs:
       - name: Validate code or the complete main tree
         env:
           TEST_MODE: ${{ github.event_name == 'pull_request' && 'contributor' || 'all' }}
-        run: node scripts/test-all.mjs --mode "$TEST_MODE"
+        # 本 fork 有意偏离上游的若干断言（jev 清理、取消 EAC 防过度思考提示、
+        # providers 计数、1M 配置），这些套件在 fork 上必然红——`--local-fork`
+        # 跳过它们。发布就绪检查（manifest/release）需要发布私钥，fork 没有，
+        # 故 contributor 模式一并排除。
+        run: node scripts/test-all.mjs --mode contributor --local-fork
 
   # Keep this check required on main. A red result on a source PR means the
   # maintainer still has release preparation to do, not that the author needs

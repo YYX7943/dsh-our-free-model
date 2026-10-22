@@ -62,10 +62,15 @@ function mintToolCallId() {
 }
 
 class BlockSink {
-  constructor(yieldChunk, startIndex, checkpointLimit, onProgress) {
+  constructor(yieldChunk, startIndex, checkpointLimit, onProgress, suppressTools = false) {
     this.emit = yieldChunk
     this.next = startIndex
     this.onProgress = typeof onProgress === 'function' ? onProgress : () => {}
+    /** 续写段抑制工具块：工具内容照常在内部跟踪，但不向外产出任何 chunk，
+     *  块索引因此保持连续（宿主看不到工具块，也看不到空洞）。 */
+    this.suppressTools = suppressTools === true
+    /** 对外可见块的索引序号：被抑制的工具块不占号，宿主看到的块索引因此连续。 */
+    this.visibleNext = startIndex
     /** @type {Map<string, {index:number, kind:string, text:string, id?:string, name?:string, args?:string}>} */
     this.open = new Map()
     this.usage = undefined
@@ -118,6 +123,12 @@ class BlockSink {
     // stand-in; a provider id arriving later still overrides it.
     const block = { index: this.next++, kind, text: '', args: '', id: kind === 'tool-call' ? mintToolCallId() : '', name: '' }
     this.open.set(key, block)
+    if (kind === 'tool-call' && this.suppressTools) {
+      // 续写段抑制：工具块不向外开（宿主看不到工具块），也不占对外块序号，
+      // 后续正文块索引因此保持连续。
+      return block
+    }
+    block.index = this.visibleNext++
     this.emit({ type: 'block-start', index: block.index, blockType: kind === 'reasoning' ? 'reasoning' : kind === 'tool-call' ? 'tool-call' : 'text' })
     return block
   }
@@ -170,6 +181,7 @@ class BlockSink {
     // lossless-JSON snapshot, which rejects an own `undefined` field outright —
     // so an unknown name is omitted from the delta, never sent as undefined.
     const name = typeof block.name === 'string' && block.name !== '' ? { name: block.name } : {}
+    if (this.suppressTools) return
     this.emit({ type: 'tool-call-delta', index: block.index, id: block.id ?? '', ...name, argumentsDelta: delta })
   }
 
@@ -185,6 +197,9 @@ class BlockSink {
       if (block.kind === 'text' && block.text !== '') this.emit({ type: 'block-end', index: block.index, block: { type: 'text', text: block.text } })
       else if (block.kind === 'reasoning' && block.text !== '') this.emit({ type: 'block-end', index: block.index, block: { type: 'reasoning', text: block.text } })
       else if (block.kind === 'tool-call') {
+        // 续写段抑制：工具块被丢弃，它既不进入产出，也不该把这一轮判成
+        // 坏工具调用（否则整轮会按 max-tokens 失败，而正文其实已经交付）。
+        if (this.suppressTools) continue
         // Arguments that never parse are an unexecutable call. The gateway
         // reports finish "tool_calls" even when the output ceiling cut the JSON
         // mid-string (verified live 2026-09-25), so the finish token alone
@@ -473,6 +488,7 @@ export function windowTokens(usage, sawReasoning) {
  * @param {number} [options.checkpointLimit=131072] - 推理检查点的最大字符串长度
  * @param {(snapshot: object) => void} [options.onState] - 发布本次读取的已知状态
  * @param {() => void} [options.onProgress] - Meaningful tool metadata arrived before arguments.
+ * @param {boolean} [options.suppressTools] - 续写段抑制工具块：工具内容不出现在产出里（块索引仍连续）。
  * @yields {object} harness StreamChunk
  * @returns {Promise<{ usage: object, finish?: string, sawFinish: boolean, sawUsage: boolean, sawToolCall: boolean, sawReasoning: boolean, firstDeltaAt?: number, nextIndex: number, reasoningText: string, checkpointTruncated: boolean }>}
  */
@@ -480,11 +496,11 @@ export async function * readStream(lines, wire, renameMap, now = () => Date.now(
   const outbox = []
   const startIndex = Number.isSafeInteger(options?.startIndex) && options.startIndex >= 0 ? options.startIndex : 0
   const checkpointLimit = Number.isSafeInteger(options?.checkpointLimit) && options.checkpointLimit >= 0 ? options.checkpointLimit : 131072
-  const sink = new BlockSink(chunk => outbox.push(chunk), startIndex, checkpointLimit, options?.onProgress)
+  const sink = new BlockSink(chunk => outbox.push(chunk), startIndex, checkpointLimit, options?.onProgress, options?.suppressTools === true)
   const state = { usage: undefined, finish: undefined, sawFinish: false, sawUsage: false, sawToolCall: false, firstDeltaAt: undefined, sawReasoning: false, sawText: false, brokenToolCall: false }
   const snapshot = () => ({
     ...state,
-    nextIndex: sink.next,
+    nextIndex: sink.visibleNext,
     reasoningText: sink.reasoningText,
     answerText: sink.answerText,
     checkpointTruncated: sink.checkpointTruncated,

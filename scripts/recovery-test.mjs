@@ -211,7 +211,7 @@ function checkFinal(run, kind, requests) {
   else assert.ok(usageCount <= 1, '首段失败或取消最多有一个 usage')
   assert.equal(run.finish?.kind, kind)
   assert.equal(run.turns.length, 1, '一次适配器调用只能记一条逻辑回合')
-  assert.equal(run.turns[0].ok, kind === 'stop', '逻辑回合结果必须跟最终结果一致')
+  assert.equal(run.turns[0].ok, kind === 'stop' || kind === 'tool-calls', '逻辑回合结果必须跟最终结果一致')
   assert.equal(run.turns[0].attempts, requests, '逻辑回合保留实际物理请求数')
   assert.equal(run.turns[0].recovered, kind === 'stop' && requests === 2, '只有成功续写才标为 recovered')
   checkBlocks(run.chunks)
@@ -322,18 +322,28 @@ try {
       const run = await drive(model, [{ body: deltas(wire, { reasoning: CHECKPOINT }) + emptyToolMetadata(wire) }])
       checkCut(run, 1)
     })
+    // 本地语义更新（2026-10-20）：续写段出现工具调用时，工具块被丢弃（不泄漏给宿主），
+    // 只要这一段交付了正文就算恢复成功；没有正文才按断流失败（见下方负控）。
     await check(`${wire}: 第二段空工具元数据也不能传给宿主`, async () => {
       const run = await drive(model, [{ body: deltas(wire, { reasoning: CHECKPOINT }) },
         { body: deltas(wire, { text: ANSWER }) + emptyToolMetadata(wire) + terminal(wire) }])
-      checkCut(run)
+      checkFinal(run, 'stop', 2)
       assert.ok(noToolChunks(run.chunks))
+      assert.equal(run.chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), ANSWER, '正文必须交付')
     })
     for (const tool of [{ toolName: TOOL.name }, { toolArgs: '{"x":1}' }]) {
       await check(`${wire}: 第二段工具输出不能泄漏给宿主`, async () => {
         const run = await drive(model, [{ body: deltas(wire, { reasoning: CHECKPOINT }) },
           { body: deltas(wire, { text: ANSWER, ...tool }) + terminal(wire, { reason: 'tool_calls' }) }])
-        checkCut(run)
         assert.ok(noToolChunks(run.chunks), '不允许任何可执行工具块或参数 delta')
+        // Responses 线没有 tool_calls 收尾的概念（它用 status），因此同样按 stop 收尾；
+        // chat/messages 线以 tool_calls 收尾的续写段按断流失败（上游原意）。
+        if (wire === 'responses') {
+          checkFinal(run, 'stop', 2)
+          assert.equal(run.chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), ANSWER, '正文必须交付')
+        } else {
+          checkCut(run)
+        }
       })
     }
     await check(`${wire}: 纯思考正常 stop 收尾会续写一次要正文`, async () => {
@@ -361,6 +371,38 @@ try {
       ])
       checkCut(run)
       assert.equal(run.records.every(row => row.recovered !== true), true)
+    })
+    // 本地修复（2026-10-20）：续写段模型仍发起工具调用时，丢弃工具块并继续等正文，
+    // 而不是抛 STREAM_CUT 打断整轮（用户实测报 "continuation unexpectedly requested a tool"）。
+    await check(`${wire}: 续写段模型发起工具调用时丢弃工具块并继续拿到正文`, async () => {
+      const run = await drive(model, [
+        { body: deltas(wire, { reasoning: CHECKPOINT }) + terminal(wire) },
+        { body: deltas(wire, { toolName: TOOL.name, toolArgs: '{"x":1}' }) + deltas(wire, { text: ANSWER }) + terminal(wire) },
+      ])
+      checkFinal(run, 'stop', 2)
+      assert.equal(run.chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), ANSWER, '正文必须来自续写段')
+      assert.ok(noToolChunks(run.chunks), '续写段的工具块不得交给宿主执行')
+      assert.equal(run.finish?.failure, undefined, '续写段工具调用不得让整轮失败')
+      assert.equal(run.records[1].recovered, true, '续写成功应记 recovered')
+    })
+    // 负控：首段（非续写）的工具调用仍必须照常交给宿主，不得被这次修复误伤。
+    await check(`${wire}: 首段工具调用不受续写修复影响仍交给宿主`, async () => {
+      const run = await drive(model, [
+        { body: deltas(wire, { toolName: TOOL.name, toolArgs: '{"x":1}' }) + terminal(wire, { reason: 'tool_calls' }) },
+      ])
+      // Responses 线没有 tool_calls 收尾的概念，一律按 stop 收尾。
+      checkFinal(run, wire === 'responses' ? 'stop' : 'tool-calls', 1)
+      assert.equal(noToolChunks(run.chunks), false, '首段的工具块必须照常下发')
+      assert.ok(run.chunks.some(chunk => chunk.type === 'tool-call-delta'), '首段工具参数 delta 必须下发')
+    })
+    // 负控：续写段只有工具调用、没有正文时，仍必须按断流失败（不交付半个答案）。
+    await check(`${wire}: 续写段只有工具调用没有正文时仍按断流失败`, async () => {
+      const run = await drive(model, [
+        { body: deltas(wire, { reasoning: CHECKPOINT }) + terminal(wire) },
+        { body: deltas(wire, { toolName: TOOL.name, toolArgs: '{"x":1}' }) + terminal(wire, { reason: 'tool_calls' }) },
+      ])
+      checkCut(run)
+      assert.ok(noToolChunks(run.chunks), '续写段的工具块仍不得交给宿主')
     })
     await check(`${wire}: 关闭恢复时纯思考正常收尾保持原分类`, async () => {
       const run = await drive(model, [{ body: deltas(wire, { reasoning: CHECKPOINT }) + terminal(wire) }],

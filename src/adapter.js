@@ -545,6 +545,9 @@ export class FreeModelAdapter {
         const reader = readStream(channel.read(), wire, renameMap, () => Date.now(), {
           startIndex: nextIndex, checkpointLimit: policy.checkpointLimit,
           onState: value => { partialOutcome = value },
+          // 续写段抑制工具块：门禁注入的官方工具会诱使模型发起调用，
+          // 此时工具内容不出现在产出里（块索引仍连续），续写继续等正文。
+          suppressTools: recovering,
         })
         let outcome
         try {
@@ -554,12 +557,6 @@ export class FreeModelAdapter {
             if (options.signal?.aborted === true) throw new UpstreamError('request aborted', CODE.aborted)
             const chunk = row.value
             if (chunk.type === 'text-delta' && typeof chunk.text === 'string' && chunk.text.trim() !== '') sawAnswer = true
-            // 续写禁用工具：recoveryMessages/continuationMessages 已剥离工具上下文，
-            // 若网关仍发起工具调用（如门禁注入官方工具），丢弃工具块继续等正文，
-            // 不再 STREAM_CUT 打断（本地修复 2026-10-20）。
-            if (recovering && (chunk.blockType === 'tool-call' || chunk.type === 'tool-call-delta' || chunk.block?.type === 'tool-call')) {
-              continue
-            }
             if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta' || chunk.type === 'tool-call-delta') {
               delivered = true
               if (firstDeltaAt === undefined) firstDeltaAt = Date.now()
@@ -617,9 +614,12 @@ export class FreeModelAdapter {
         }
         const failedEnding = outcome.finish === 'failed' || outcome.finish === 'cancelled'
         const normalEnding = outcome.finish === undefined || ['stop', 'end_turn', 'stop_sequence'].includes(outcome.finish)
+        // 续写段的工具调用已被丢弃（见上方 chunk 过滤）：只要续写段拿到了正文，
+        // 这一轮就算成功（模型多发了一个工具调用，但答案已交付）；
+        // 没有正文时仍按断流失败（上游原意：不交付半个答案）。
+        const toolCallOutstanding = outcome.sawToolCall === true && recovering !== true
         if (outcome.sawFinish !== true || failedEnding || (recovering && (!sawAnswer
-          || outcome.sawToolCall === true || reason.kind !== 'stop' || !normalEnding))) {
-          const seconds = Math.round((Date.now() - started) / 1000)
+          || toolCallOutstanding || reason.kind !== 'stop' || !normalEnding))) {          const seconds = Math.round((Date.now() - started) / 1000)
           const code = recovering || delivered || outcome.sawToolCall === true ? 'STREAM_CUT'
             : failedEnding ? CODE.server : CODE.transport
           const message = recovering

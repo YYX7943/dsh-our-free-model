@@ -156,8 +156,8 @@ function callIdOf(message) {
 /**
  * Project harness messages onto OpenAI Chat Completions.
  *
- * Assistant reasoning is never replayed upstream; only visible text and tool
- * calls are. Tool results are first-class `role: 'tool'` messages keyed by the
+ * Forwarded Chat reasoning_content is preserved, including explicit empty strings.
+ * Internal reasoning blocks are not projected. Tool results are first-class `role: 'tool'` messages keyed by the
  * provider call id they answer.
  */
 export function toChatMessages(messages, resolveImage, warnings) {
@@ -224,7 +224,6 @@ export function toChatMessages(messages, resolveImage, warnings) {
       case 'assistant': {
         const text = textOf(blocks)
         const calls = []
-        let reasoning = ''
         for (const block of blocks) {
           if (block?.type === 'tool-call') {
             calls.push({
@@ -232,19 +231,12 @@ export function toChatMessages(messages, resolveImage, warnings) {
               type: 'function',
               function: { name: String(block.name ?? ''), arguments: typeof block.arguments === 'string' ? block.arguments : '{}' },
             })
-          } else if (block?.type === 'reasoning' || block?.type === 'thinking') {
-            reasoning += String(block.text ?? block.thinking ?? '')
           }
         }
-        // 本地修复（2026-10-20）：DeepSeek 思考模式要求续写时把上一轮的
-        // reasoning_content 原样传回（400 "must be passed back"）。channel-pack
-        // 对 deepseek-v4-flash/pro 已做同样处理；这里覆盖免费车道 chat 端点。
-        // 无推理时不带字段，不影响非思考模型。
-        if (typeof message?.reasoning_content === 'string' && reasoning === '') reasoning = message.reasoning_content
-        if (typeof message?.reasoning === 'string' && reasoning === '') reasoning = message.reasoning
-        if (!text && calls.length === 0 && reasoning === '') break
+        if (!text && calls.length === 0) break
         const entry = { role: 'assistant', content: text || null }
-        if (reasoning !== '') entry.reasoning_content = reasoning
+        // 官方修复（7c8d432）：保留转发的顶层 reasoning_content（含空串），内部块不投影。
+        if (typeof message.reasoning_content === 'string') entry.reasoning_content = message.reasoning_content
         if (calls.length > 0) entry.tool_calls = calls
         out.push(entry)
         break

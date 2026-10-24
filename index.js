@@ -1429,22 +1429,19 @@ export function apply(ctx, config) {
       if (disposed) return
       await syncChanRelay()
       if (disposed) return
-      // Every await here is a chance for teardown to have run underneath this
-      // boot: a resumed refresh would force a probe round against stores it
-      // disposed. The round is boot's only network step, so it is the one held
-      // to a failure of its own — a throw here used to take the watcher, the
-      // topology event and the upgrade marker below down with it, reported as
-      // a single "startup refresh failed" line.
-      try {
-        await refreshCatalog({ probe: true, force: true })
-      } catch (error) {
+      // 本地修改（2026-10-24，启动加速）：这轮 listing+探活仍是 boot 唯一网络步，
+      // 但不再挡在 hello 之前——出口慢/被封锁时它跑几十秒到分钟级，插件页桥接
+      // 就绪（hello）原先要等整轮结束。现在立即发起、脱离关键路径：缓存目录
+      // （catalogStore 物化）先顶住界面，轮末的 emitTopology 自然刷新页面，
+      // 行为与手动点「刷新清单」一致。失败单独 catch，不再拖累上面的步骤。
+      const bootRound = refreshCatalog({ probe: true, force: true }).catch(error => {
         logger.warn?.(`our-free-model: startup refresh failed (${error?.message ?? error})`)
-      }
-      if (disposed) return
+      })
       syncWatcher()
       emitTopology()
       push.emit('hello', helloPayload())
-    })().catch(error => logger.warn?.(`our-free-model: startup refresh failed (${error?.message ?? error})`))
+      void bootRound
+    })().catch(error => logger.warn?.(`our-free-model: boot failed (${error?.message ?? error})`))
   }, 'our-free-model: boot refresh')
 
   // Feed poll: shortly after boot, then on the configured period. Concurrency

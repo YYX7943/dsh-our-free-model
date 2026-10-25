@@ -9,6 +9,8 @@ import { isLoopbackHost } from '../../src/trust.js'
 import { createManagement } from './management.mjs'
 import { createStandaloneEac } from './eac.mjs'
 import { createChannelRuntime } from './channels/runtime.mjs'
+import { createSubscriptions } from '../../src/subscriptions.js'
+import { createSubscriptionRuntime } from '../../src/subscription-completion.js'
 
 const PRODUCT = 'our-free-model-standalone'
 const VERSION = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
@@ -108,6 +110,7 @@ export async function startStandalone({
   dataDir = resolveStandaloneDataDir(), host = '127.0.0.1', port,
   logger = console, refresh = true, probe, lanEnabled, lanPort,
   startRelay = startLanRelay,
+  workbenchOptions, subscriptionOptions,
 } = {}) {
   if (!isLoopbackHost(host)) throw new TypeError('the standalone service binds a loopback address only')
   if (typeof dataDir !== 'string' || !path.isAbsolute(dataDir)) throw new TypeError('dataDir must be an absolute path')
@@ -125,6 +128,7 @@ export async function startStandalone({
   let listener
   let management
   let channels
+  let subscriptions
   let eac
   let timer
   let refreshInFlight
@@ -225,6 +229,8 @@ export async function startStandalone({
     const savedLanPort = settings.get().standaloneLanPort
     settings.update({
       forwardKey: key,
+      managementKey: typeof settings.get().managementKey === 'string' && settings.get().managementKey !== ''
+        && settings.get().managementKey !== key ? settings.get().managementKey : generateKey(),
       standaloneLanEnabled: lanEnabled ?? settings.get().standaloneLanEnabled === true,
       standaloneLanPort: lanPort ?? (Number.isInteger(savedLanPort) && savedLanPort >= 0 && savedLanPort <= 65535 ? savedLanPort : 0),
       ...probe === undefined ? {} : { standaloneProbe: probe === true },
@@ -236,9 +242,12 @@ export async function startStandalone({
       ...process.env.OFM_TEST_UPSTREAM ? { openExternal: async () => false } : {},
       onSaved: () => { void runtime?.refreshSealedLane().catch(error => logger.warn?.(`EAC 清单刷新失败：${error.message}`)) },
     })
+    subscriptions = createSubscriptions({ dataDir, ...subscriptionOptions })
+    const subscriptionRuntime = createSubscriptionRuntime({ subscriptions, stats: stores.stats, logger })
     runtime = createModelRuntime({
       ...stores, logger, attributionUserAgent: `${PRODUCT}/${VERSION}`,
       sealedCredential: eac.credential,
+      subscriptionRuntime,
     })
     channels = await createChannelRuntime({ dataDir, logger, stats: stores.stats })
     const core = runtime
@@ -256,7 +265,7 @@ export async function startStandalone({
       },
     }
     management = createManagement({
-      stores, runtime, channels, eac,
+      stores, runtime, channels, eac, subscriptions, workbenchOptions,
       info: () => ({
         product: PRODUCT, version: VERSION, dataDir,
         baseUrl: `http://${host === '::1' ? '[::1]' : host}:${listener?.port ?? requestedPort}`,
@@ -295,15 +304,18 @@ export async function startStandalone({
     }
     function refreshModels(force = false) {
       if (refreshInFlight) return refreshInFlight
-      refreshInFlight = runtime.refreshCatalog({ probe: settings.get().standaloneProbe === true, force })
+      // Automatic availability probing is disabled by owner policy: periodic and
+      // boot refreshes only reload the listing. The management "probe" action
+      // still asks for an explicit probe through the runtime API.
+      refreshInFlight = runtime.refreshCatalog({ probe: false, force })
         .catch(error => {
           if (!stopped) logger.warn?.(`our-free-model standalone: catalog refresh failed (${error?.message ?? error})`)
         })
         .finally(() => { refreshInFlight = undefined; scheduleRefresh() })
       return refreshInFlight
     }
-    // 启动可强制探测；后续周期刷新遵守核心的限流退避。
-    const ready = Promise.all([channels.ready, refresh ? refreshModels(settings.get().standaloneProbe === true) : Promise.resolve()])
+    // 启动与周期刷新只更新清单，不自动探测；手动“探测可用性”仍走运行时 API。
+    const ready = Promise.all([channels.ready, refresh ? refreshModels(false) : Promise.resolve()])
     return {
       product: PRODUCT, version: VERSION, dataDir,
       url: `http://${host === '::1' ? '[::1]' : host}:${listener.port}`,
@@ -316,13 +328,13 @@ export async function startStandalone({
         if (closing !== undefined) return closing
         stopped = true
         clearTimeout(timer)
-        management.dispose()
+        const managementClosing = management.dispose()
         eac.dispose()
         runtime.dispose()
         closing = (async () => {
           try {
             await relayChanges
-            await Promise.all([closeRelay(), listener.close(), channels.close()])
+            await Promise.all([managementClosing, closeRelay(), listener.close(), channels.close()])
           } finally {
             try { stores.dispose() } finally { await releaseLock() }
           }
@@ -333,7 +345,7 @@ export async function startStandalone({
   } catch (error) {
     stopped = true
     clearTimeout(timer)
-    management?.dispose()
+    await management?.dispose()
     eac?.dispose()
     runtime?.dispose()
     await relayChanges

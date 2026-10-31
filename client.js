@@ -53,7 +53,7 @@ window.__ModuleLoader__.load({
         'state.available': '可用',
         'state.region-blocked': '地区受限',
         'state.unavailable': '暂不可用',
-        'state.throttled': '暂不可用',
+        'state.throttled': '限流',
         'state.unknown': '未探测',
         'state.listed': '已列出 · 未实测',
         'roster.selectable': '可选模型',
@@ -315,6 +315,7 @@ window.__ModuleLoader__.load({
         'upgrade.current': '运行版本',
         'upgrade.installed': '磁盘版本',
         'upgrade.mismatch': '运行版本与磁盘版本不一致，请先确认安装状态，再重载或重启。',
+        'upgrade.restartHint': '当前宿主不能安全地热重载插件。升级文件会先安全安装，之后需要重启宿主应用才能生效。',
         'upgrade.recovery': '上次升级未完整恢复。请关闭应用，使用保留的备份恢复安装目录，重新启动后检查更新。',
         'upgrade.backup': '恢复备份',
         'upgrade.latest': '最新版本',
@@ -332,6 +333,7 @@ window.__ModuleLoader__.load({
         'upgrade.phase.reload': '正在热重载…',
         'upgrade.done': '已升级到 {version}，插件已热重载生效。',
         'upgrade.doneRefresh': '已升级到 {version}。点击刷新页面加载新界面。',
+        'upgrade.restart': '已升级到 {version}。文件已安全安装，请重启宿主应用后生效。',
         'upgrade.failed': '升级失败：{message}',
         'upgrade.history': '最近一次升级',
         'upgrade.from': '由 {from} 升级',
@@ -389,14 +391,16 @@ window.__ModuleLoader__.load({
         'picks.design.tag3': '原生预览画布',
         'picks.design.tag4': '真实文件导出',
         'free.title': '免费模型',
-        'free.sub': '免登录、免 Key、免配置：模型清单跟随上游刷新，可用性由这台机器实测。',
+        'free.sub': '匿名免费与 Kilo 模型统一展示：水位表示可选比例，实测状态单独显示。',
         'sponsor.bannerTag': '中转站',
         'sponsor.bannerTitle': '北辰 API 中转站',
         'sponsor.bannerDescription': 'OFM 官方合作中转站，为用户提供稳定、开放、高性价比的大模型 API 接入服务。支持 Claude、ChatGPT、Grok、Gemini、智谱 GLM、Kimi、DeepSeek 等主流模型，适合在 Codex、Gemini CLI、Claude Code 及其他开发工具中统一配置使用。邀请可获百分之十的返现。',
         'sponsor.bannerCta': '立即查看',
-        'free.tankLabel': '免费车道可用度',
-        'free.tankNote': '水位 = 当前可用模型占比（{ok}/{total}）',
-        'free.tankEmpty': '尚未探测，水位按已声明模型占位。',
+        'free.tankLabel': '免费池可选占比',
+        'free.tankNote': '水位 = 未受限可选模型 / 总数（{selectable}/{total}）；未探测计为候选，不代表实测成功率。',
+        'free.tankEmpty': '免费池暂未发现模型。',
+        'free.statHint': '五格状态计数相加 = 匿名免费与 Kilo 模型总数（{total}）；仅列出但未测试的模型计入「未探测」。',
+        'free.sources': '匿名免费 {anonymous} · Kilo {kilo}',
         'eac.title': 'EAC 模型',
         'eac.sub': '桌面端协付渠道：GitHub 登录并 star 本仓库后解锁，与免费车道互不影响。',
         'eac.tankLabel': '协付池压力',
@@ -826,7 +830,7 @@ window.__ModuleLoader__.load({
         'state.available': 'Available',
         'state.region-blocked': 'Region-limited',
         'state.unavailable': 'Unavailable',
-        'state.throttled': 'Temporarily unavailable',
+        'state.throttled': 'Throttled',
         'state.unknown': 'Not probed',
         'state.listed': 'Listed · not tested',
         'roster.selectable': 'Selectable models',
@@ -1088,6 +1092,8 @@ window.__ModuleLoader__.load({
         'upgrade.current': 'Running',
         'upgrade.installed': 'On disk',
         'upgrade.mismatch': 'The running and on-disk versions differ. Check the installation before reloading or restarting.',
+        'upgrade.restartHint': 'This host cannot safely hot-reload the plugin. Updates are installed safely and take effect after restarting the host application.',
+        'upgrade.restart': 'Upgraded to {version}. The files are installed safely; restart the host application to activate them.',
         'upgrade.recovery': 'The last upgrade was not fully restored. Close the app, restore the installation from the retained backup, restart, then check for updates.',
         'upgrade.backup': 'Recovery backup',
         'upgrade.latest': 'Latest',
@@ -1162,14 +1168,16 @@ window.__ModuleLoader__.load({
         'picks.design.tag3': 'Native preview canvas',
         'picks.design.tag4': 'Real file export',
         'free.title': 'Free models',
-        'free.sub': 'No login, no key, no setup: the roster follows upstream, availability is measured from this machine.',
+        'free.sub': 'Anonymous free and Kilo models share this pool. Water shows the selectable share; measured availability is shown separately.',
         'sponsor.bannerTag': 'Relay',
         'sponsor.bannerTitle': 'Beichen API relay',
         'sponsor.bannerDescription': 'OFM’s official relay partner provides stable, open and cost-effective model API access. Claude, ChatGPT, Grok, Gemini, GLM, Kimi and DeepSeek are supported for one consistent setup in Codex, Gemini CLI, Claude Code and other developer tools. Invite others to receive 10% cashback.',
         'sponsor.bannerCta': 'View now',
-        'free.tankLabel': 'Free-lane availability',
-        'free.tankNote': 'Water level = share of reachable models ({ok}/{total})',
-        'free.tankEmpty': 'Not probed yet; the level stands at the declared roster.',
+        'free.tankLabel': 'Selectable free-pool models',
+        'free.tankNote': 'Water = unblocked candidates / total ({selectable}/{total}); untested models remain candidates, not verified successes.',
+        'free.tankEmpty': 'No models have been discovered in this free pool.',
+        'free.statHint': 'The five status counts add up to all anonymous free and Kilo models ({total}); listed but untested models are counted as not probed.',
+        'free.sources': 'Anonymous free {anonymous} · Kilo {kilo}',
         'eac.title': 'EAC models',
         'eac.sub': 'The desktop co-paid lane: unlocked by a GitHub login plus a star, independent of the free lane.',
         'eac.tankLabel': 'Co-paid pool pressure',
@@ -3222,15 +3230,36 @@ window.__ModuleLoader__.load({
           bench?.result === undefined ? null : h('span', { className: 'ofm_note' }, bench.result)))
     }
 
+    function isFreePoolModel(model) {
+      return !model.channel || model.channel === 'anonymous' || model.channel === 'kilo'
+    }
+
+    function freePoolView(data) {
+      const rows = (data.catalog ?? []).filter(isFreePoolModel)
+      const counts = { available: 0, 'region-blocked': 0, unavailable: 0, throttled: 0, unknown: 0 }
+      for (const model of rows) {
+        const state = model.availabilitySource === 'listing' ? 'unknown' : model.availability
+        counts[Object.hasOwn(counts, state) ? state : 'unknown']++
+      }
+      // 选择器可能保留暂时限流的模型；这些已知受阻模型不应抬高水位。
+      const blocked = new Set(['throttled', 'unavailable', 'region-blocked'])
+      const selectable = data.settings?.enabled === false ? 0 : rows.filter(model => {
+        const state = model.availabilitySource === 'listing' ? 'unknown' : model.availability
+        return !blocked.has(state) && !model.hiddenByUser && !model.hiddenByGroup &&
+          (model.route === 'our-free-model' ||
+            (model.route === 'our-free-model-region' && data.settings?.exposeRegionModels !== false))
+      }).length
+      return { rows, counts, total: rows.length, selectable,
+        anonymous: rows.filter(model => model.channel !== 'kilo').length,
+        kilo: rows.filter(model => model.channel === 'kilo').length }
+    }
+
     function Roster(props) {
       const { summary, t, onBench, benches = {}, auth, eacLogin, only, onApply, busy } = props
-      // `only` splits the same roster across the two model pages: the EAC page
-      // shows the co-paid entries, the free page everything else. Filtering
-      // here (rather than in each page) keeps one definition of what a route
-      // group means.
+      // 免费页与水位采用相同范围：匿名免费模型和 Kilo；其他付费来源留在各自页面。
       const roster = only === undefined ? summary.catalog
         : only === 'eac' ? summary.catalog.filter(m => m.channel === 'eac')
-          : summary.catalog.filter(m => m.channel !== 'eac')
+          : summary.catalog.filter(isFreePoolModel)
       // Featured rows lead their group: the pinned flag rides the catalog row, so
       // the order is the same on the EAC page and in the onboarding roster, and a
       // row that is not featured keeps its upstream order.
@@ -4095,7 +4124,8 @@ window.__ModuleLoader__.load({
           control.current.phase = ''
           const version = event.detail?.version ?? ''
           setPhase(''); setError('')
-          setMessage(control.current.managed || version === '' ? '' : t('upgrade.done').replace('{version}', version))
+          setMessage(control.current.managed || version === '' ? '' : event.detail?.restartRequired === true
+           ? t('upgrade.restart').replace('{version}', version) : t('upgrade.done').replace('{version}', version))
           void status.reload()
         }
         window.addEventListener('ofm:upgraded', handler)
@@ -4137,7 +4167,8 @@ window.__ModuleLoader__.load({
           const result = await post('/update/apply', {}, 600_000)
           // The response releases controls even when hot reload closes SSE.
           if (!finish(token)) return
-          setMessage(result?.version === undefined ? t('upgrade.phase.install') : t('upgrade.doneRefresh').replace('{version}', result.version))
+          setMessage(result?.version === undefined ? t('upgrade.phase.install') : result.restartRequired === true
+            ? t('upgrade.restart').replace('{version}', result.version) : t('upgrade.doneRefresh').replace('{version}', result.version))
           void status.reload()
         } catch (err) {
           if (!finish(token)) return
@@ -4168,7 +4199,8 @@ window.__ModuleLoader__.load({
           !managed && data?.available === true ? h('span', { className: 'ofm_pill' }, h('span', { className: 'ofm_dot warn' }), t('upgrade.available').replace('{version}', data.latest)) : null,
           upToDate ? h('span', { className: 'ofm_pill' }, h('span', { className: 'ofm_dot ok' }), t('upgrade.upToDate')) : null,
           h('span', { className: 'ofm_pill' }, `${t('upgrade.checkedAt')}: ${data?.checkedAt ? ago(data.checkedAt, t.locale) : t('upgrade.never')}`)),
-        h('div', { className: 'ofm_row' },
+        data?.hotReloadAvailable === false || data?.restartRequired === true ? h('div', { className: 'ofm_callout', role: 'status' }, t('upgrade.restartHint')) : null,
+         h('div', { className: 'ofm_row' },
           h(Button, { disabled: managed || phase !== '' || status.status !== 'ready' || data?.applying === true, onClick: check }, !managed && phase === 'checking' ? t('upgrade.checking') : t('upgrade.check')),
           data?.available === true ? h(Button, { kind: 'primary', disabled: managed || status.status !== 'ready' || phase !== '' || data.applying === true || data.recoveryRequired === true, onClick: applyUpgrade }, !managed && phase === 'applying' ? t('upgrade.applying') : t('upgrade.apply')) : null,
           h('a', {
@@ -4196,8 +4228,8 @@ window.__ModuleLoader__.load({
           data.lastApplied.ok === false && data.lastApplied.error ? ` — ${data.lastApplied.error}` : '') : null,
         !managed ? h('p', { className: 'ofm_note' }, (settings.updateCheckHours ?? 0) > 0 ? t('upgrade.auto').replace('{n}', String(settings.updateCheckHours)) : t('upgrade.autoOff')) : null,
         h('div', { className: 'ofm_row' },
-          h(Button, { disabled: managed || status.status !== 'ready' || phase !== '' || data?.applying === true || data?.recoveryRequired === true, onClick: reload }, phase === 'reloading' && !managed ? t('reload.reloading') : t('reload.now')),
-          h(Switch, { checked: !managed && settings.autoReloadWatch === true, disabled: managed || status.status !== 'ready' || phase !== '' || busy, label: t('reload.auto'), onChange: () => { if (!control.current.managed && control.current.ready && control.current.phase === '' && !busy) onApply({ autoReloadWatch: !(settings.autoReloadWatch === true) }) } }),
+          h(Button, { disabled: managed || data?.hotReloadAvailable === false || data?.restartRequired === true || status.status !== 'ready' || phase !== '' || data?.applying === true || data?.recoveryRequired === true, onClick: reload }, phase === 'reloading' && !managed ? t('reload.reloading') : t('reload.now')),
+          h(Switch, { checked: !managed && data?.autoReloadWatch === true, disabled: managed || data?.hotReloadAvailable === false || status.status !== 'ready' || phase !== '' || busy, label: t('reload.auto'), onChange: () => { if (!control.current.managed && control.current.ready && control.current.data?.hotReloadAvailable !== false && control.current.phase === '' && !busy) onApply({ autoReloadWatch: !(control.current.data?.autoReloadWatch === true) }) } }),
           managed ? null : h('span', { className: 'ofm_note' }, t('reload.done').replace('{n}', String(settings.reloadCount ?? 0)))))
     }
 
@@ -4873,8 +4905,14 @@ window.__ModuleLoader__.load({
                       type: 'button', className: 'ofm_minibtn', disabled: busy !== '' || !rpc,
                       onClick: () => accountAction('test:' + row.id, row.id, async () => {
                         const value = await rpc('account.test', { accountId: row.id }, 90_000)
+                        // The RPC envelope is `ok: true` here even when the probe
+                        // failed — `account.test` reports the outcome *inside*
+                        // `value`, so a failed probe lands on this branch with its
+                        // reason in `value.message`. Reading `value.error` (which
+                        // the server never sets) printed an empty reason: the
+                        // user saw "测试失败：" and nothing else (#681).
                         setNotice(value?.ok === false
-                          ? t('chan.test.failed').replace('{reason}', value?.error ?? '')
+                          ? t('chan.test.failed').replace('{reason}', value?.error ?? value?.message ?? '')
                           : t('chan.test.ok').replace('{ms}', String(value?.ms ?? value?.latencyMs ?? '—')))
                       }),
                     }, t('chan.act.test')),
@@ -6814,11 +6852,8 @@ window.__ModuleLoader__.load({
           h('div', null, h(Button, { onClick: () => summary.reload() }, t('retry'))))
       }
       const data = summary.data
-      // The tank and the stat chips describe the free lane's health, so the
-      // absorbed channels stay out of the tally — their cards carry their own
-      // availability badge, and a lane that is never probed would otherwise
-      // read as a permanently green slice of this gauge.
-      const counts = data.catalog.filter(m => !m.channel).reduce((acc, m) => ({ ...acc, [m.availabilitySource === 'listing' ? 'unknown' : m.availability]: (acc[m.availabilitySource === 'listing' ? 'unknown' : m.availability] ?? 0) + 1 }), {})
+      // 匿名免费与 Kilo 共用状态统计；清单条目不会被当成实测成功。
+      const counts = freePoolView(data).counts
       return h(Shell, {
         t: tagged, data, counts, summary, stats, eacAuth, setEacAuth, eacLogin,
         busy, setBusy, apply, bench, benches, ctx: props.ctx,
@@ -6919,14 +6954,31 @@ window.__ModuleLoader__.load({
         const escape = event => {
           if (event.key === 'Escape') setExpanded(false)
         }
+        // The engine page is an iframe: once focus is inside it, key events go
+        // to the child document and the parent listener never sees them, so
+        // Escape did nothing in exactly the state the panel spends its time in.
+        // Listen on the frame's document too; same-origin, so it is reachable.
+        let frameEscape = null
+        const bindFrame = () => {
+          try {
+            const doc = frame.current?.contentDocument
+            if (!doc || frameEscape) return
+            frameEscape = doc
+            doc.addEventListener('keydown', escape)
+          } catch { /* cross-origin engine page: the parent listener still applies */ }
+        }
+        bindFrame()
+        const frameTimer = setInterval(bindFrame, 400)
         const focus = event => {
           if (!host.contains(event.target)) closeButton.current?.focus()
         }
         window.addEventListener('keydown', escape)
         document.addEventListener('focusin', focus)
         return () => {
+          clearInterval(frameTimer)
           window.removeEventListener('keydown', escape)
           document.removeEventListener('focusin', focus)
+          try { frameEscape?.removeEventListener('keydown', escape) } catch { /* frame already gone */ }
           if (root) root.inert = wasInert
           host.remove()
           if (focused?.isConnected) focused.focus?.()
@@ -6991,9 +7043,13 @@ window.__ModuleLoader__.load({
               state === 'starting' ? t('engine.starting') : t('engine.failed')),
             state === 'error' ? h(Button, { kind: 'primary', onClick: () => setGeneration(value => value + 1) }, t('engine.start')) : null))
       return h('div', { className: 'ofm_page ofm_engineworkspace', ref: anchor },
-        expanded ? portal ? ReactDOM.createPortal(
+        // While expanded the panel lives in its overlay portal. For the one frame
+        // before the portal host exists it stays inline: rendering `null` in that
+        // gap removed the whole toolbar, and with it the only collapse button —
+        // a missed portal left the workbench stuck open until a restart (#700).
+        expanded && portal ? ReactDOM.createPortal(
           h('div', { className: 'ofm_root ofm_engineoverlay', role: 'dialog', 'aria-modal': 'true',
-            'aria-label': t('engine.title'), 'data-ofm-effects': 'off' }, content), portal) : null : content)
+            'aria-label': t('engine.title'), 'data-ofm-effects': 'off' }, content), portal) : content)
     }
 
     function WorkspacePage({ t, summary, section, onSelect }) {
@@ -7108,7 +7164,7 @@ window.__ModuleLoader__.load({
       const reprobe = () => runCatalog('/reprobe')
 
       const tabs = [
-        ['free', t('nav.tab.free'), counts.available ?? 0],
+        ['free', t('nav.tab.free'), freePoolView(data).total],
         ['eac', t('nav.tab.eac'), data.catalog.filter(m => m.channel === 'eac').length],
         ['channels', t('nav.tab.channels'), CHANNEL_PROVIDERS.length],
         ['aggregate', t('nav.tab.aggregate'), data.catalog.filter(m => m.channel === 'aggregate').length],
@@ -7198,21 +7254,11 @@ window.__ModuleLoader__.load({
 
     function FreePage(props) {
       const { t, data, counts, summary, stats, eacAuth, eacLogin, busy, catalogBusy, apply, bench, benches, refresh, reprobe } = props
-      // The denominator is the free lane's own roster — the only slice the
-      // verdicts describe. Dividing by the whole catalog (which also carries
-      // the never-probed EAC and Kilo entries) read a 6-of-10 lane as ~17%.
-      const total = data.catalog.filter(m => !m.channel).length
+      const { total, selectable, anonymous, kilo: kiloCount } = freePoolView(data)
       const ok = counts.available ?? 0
-      // The tank reads the free lane's own health: the share of the declared
-      // roster this machine can actually reach. Same thresholds as the pool
-      // gauge, so the two pages' tanks never disagree about what "busy" looks
-      // like — only about what the water is measuring.
-      const pct = total > 0 ? Math.max(0, Math.min(100, Math.round(100 * ok / total))) : null
-      const ratio = total > 0 ? ok / total : 0
-      // Thresholds for *availability* (not load): most of a frontier roster being
-      // reachable is the healthy case, so "busy" starts below 60% rather than
-      // below two thirds — the pool gauge's own cut-offs measure queue pressure
-      // and would paint a perfectly usable lane amber.
+      const pct = total > 0 ? Math.max(0, Math.min(100, Math.round(100 * selectable / total))) : null
+      const ratio = total > 0 ? selectable / total : 0
+      // 颜色跟随可选比例；实际探测结果仍由下方五格状态独立显示。
       const level = ratio >= 0.6 ? 'ok' : ratio >= 0.3 ? 'busy' : 'over'
       return h('div', { className: 'ofm_page' },
         h(SponsorBanner, { t }),
@@ -7233,15 +7279,19 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'ofm_pooldot' }),
                   `${t('free.tankLabel')} ${pct ?? '—'}%`),
                 h(StarButton, { t })),
-              h('div', { className: 'ofm_poolstats' },
+              h('div', { className: 'ofm_poolstats', title: t('free.statHint').replace('{total}', String(total)) },
                 h('div', { className: 'ofm_stat' }, h('b', null, String(ok)), h('span', null, t('state.available'))),
                 h('div', { className: `ofm_stat${(counts['region-blocked'] ?? 0) > 0 ? ' hot' : ''}` },
                   h('b', null, String(counts['region-blocked'] ?? 0)), h('span', null, t('state.region-blocked'))),
-                h('div', { className: 'ofm_stat' }, h('b', null, String(counts.unavailable ?? 0)), h('span', null, t('state.unavailable')))),
+                h('div', { className: 'ofm_stat' }, h('b', null, String(counts.unavailable ?? 0)), h('span', null, t('state.unavailable'))),
+                h('div', { className: `ofm_stat${(counts.throttled ?? 0) > 0 ? ' hot' : ''}` },
+                  h('b', null, String(counts.throttled ?? 0)), h('span', null, t('state.throttled'))),
+                h('div', { className: 'ofm_stat' }, h('b', null, String(counts.unknown ?? 0)), h('span', null, t('state.unknown')))),
               h('div', { className: 'ofm_poolmeta' },
                 h('span', { className: 'ofm_note' }, total > 0
-                  ? t('free.tankNote').replace('{ok}', String(ok)).replace('{total}', String(total))
+                  ? t('free.tankNote').replace('{selectable}', String(selectable)).replace('{total}', String(total))
                   : t('free.tankEmpty')),
+                h('span', { className: 'ofm_note' }, t('free.sources').replace('{anonymous}', String(anonymous)).replace('{kilo}', String(kiloCount))),
                 h('span', { className: 'ofm_note' }, t('meta.description'))),
               h('div', { className: 'ofm_row' },
                 h(Button, { disabled: busy || catalogBusy, onClick: refresh }, catalogBusy || summary.status === 'loading' ? t('probing') : t('refresh')),
@@ -7375,16 +7425,16 @@ window.__ModuleLoader__.load({
          `document.elementFromPoint` over the next-page button returned BODY — the
          dialog could not be clicked at all. The full-viewport scrim already
          swallows every pointer event aimed at the app behind it. */
+      const host = acknowledged ? null : announcementPortalHost()
+      useEffect(() => () => {
+        if (host && host.parentNode !== null) host.parentNode.removeChild(host)
+      }, [host])
       if (acknowledged) return null
       const last = page === PAGES.length - 1
       const finish = async () => {
         try { await post(`/announcement/ack?version=${encodeURIComponent(summary?.announcementVersion ?? '')}`) } catch { /* ack is best effort */ }
         complete()
       }
-      const host = announcementPortalHost()
-      useEffect(() => () => {
-        if (host.parentNode !== null) host.parentNode.removeChild(host)
-      }, [host])
       return ReactDOM.createPortal(h('div', { className: 'ofm_scrim' },
         h('div', { className: 'ofm_ann', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('title') },
           h('div', { className: 'ofm_annhead' },

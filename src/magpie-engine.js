@@ -6,7 +6,9 @@ import http from 'node:http'
 import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { restrictPermissions } from './open-external.js'
 import { loopbackFetch } from './loopback-fetch.js'
+import { hasEnginePayload, materializeEngine } from './engine-payload.js'
 import {
   POLICY_REFUSED, assertEngineMutation, deniedLookup, filterEngineJSON, policyMutation, policyResponse,
 } from './magpie-policy.js'
@@ -224,7 +226,15 @@ async function ownerLease(home) {
         throw engineError('Engine owner lock has an unsupported format')
       }
       let lease
-      try { lease = await bindLease(saved.port) } catch {
+      try { lease = await bindLease(saved.port) } catch (error) {
+        if (error?.code === 'EACCES' || error?.code === 'EPERM') {
+          // Windows reserves whole port ranges (winnat/Hyper-V/WSL) that drift
+          // across reboots. A saved lease port inside one is unusable on this
+          // boot, not owned: only a live listener reports EADDRINUSE. Drop the
+          // stale record and take a fresh lease instead of failing startup (#688).
+          await unlink(file).catch(() => {})
+          continue
+        }
         throw engineError('Magpie data directory already has an owner or its lease port is occupied')
       }
       try {
@@ -238,6 +248,7 @@ async function ownerLease(home) {
       await writeFile(temp, JSON.stringify({
         version: 1, port: lease.address().port, pid: process.pid, token: randomBytes(16).toString('hex'),
       }), { mode: 0o600, flag: 'wx' })
+      restrictPermissions(temp)
       // Atomic publication never overwrites another owner's lease record.
       await link(temp, file)
       return lease
@@ -260,6 +271,7 @@ async function writeJSON(file, value) {
   const temp = `${file}.${randomBytes(6).toString('hex')}.tmp`
   try {
     await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: 'wx' })
+    restrictPermissions(temp)
     await rename(temp, file)
   } finally { await unlink(temp).catch(() => {}) }
 }
@@ -632,7 +644,7 @@ export function createMagpieEngine({ dataDir, logger, binary } = {}) {
   try { metadata = JSON.parse(readFileSync(path.join(vendor, 'engine.json'), 'utf8')) } catch {}
   const target = `${process.platform}-${process.arch}`
   const entry = metadata.binaries?.[target]
-  const executable = binary ? path.resolve(binary) : path.join(vendor, 'bin', `magpie-${target}${process.platform === 'win32' ? '.exe' : ''}`)
+  let executable = binary ? path.resolve(binary) : path.join(vendor, 'bin', `magpie-${target}${process.platform === 'win32' ? '.exe' : ''}`)
   const home = path.join(dataDir, 'magpie')
   let state = 'stopped'
   let error = null
@@ -651,7 +663,7 @@ export function createMagpieEngine({ dataDir, logger, binary } = {}) {
   let recovering = Promise.resolve()
   const active = new Set()
   const status = () => ({
-    state, available: existsSync(executable), version: metadata.version || null,
+    state, available: existsSync(executable) || (!binary && hasEnginePayload(fileURLToPath(new URL('../', import.meta.url)), entry)), version: metadata.version || null,
     revision: metadata.revision || null, error,
   })
   const note = () => {
@@ -684,6 +696,10 @@ export function createMagpieEngine({ dataDir, logger, binary } = {}) {
   const boot = async () => {
     await recovering
     assertOpen()
+    if (!binary && !existsSync(executable) && entry?.compressed) {
+      executable = await materializeEngine({ pkgDir: fileURLToPath(new URL('../', import.meta.url)), dataDir, entry })
+      assertOpen()
+    }
     if (!existsSync(executable)) throw engineError('Magpie engine binary is unavailable')
     const beside = path.dirname(await realpath(executable))
     if (existsSync(path.join(beside, '.portable')) || existsSync(path.join(beside, 'data'))) {
@@ -713,11 +729,15 @@ export function createMagpieEngine({ dataDir, logger, binary } = {}) {
         throw engineError('Saved engine gateway port is invalid')
       }
       if (gatewayPort !== undefined) {
-        let reservation
-        try { reservation = await bindLease(gatewayPort) } catch {
-          throw engineError('Saved engine gateway port is occupied; close the conflicting listener before restarting')
+        try {
+          const reservation = await bindLease(gatewayPort)
+          await closeLease(reservation)
+        } catch {
+          // The saved port is a preference, not a requirement: another listener
+          // or a Windows reserved range that drifted across reboots (#688) must
+          // not block startup. Take a fresh port; it is persisted right below.
+          gatewayPort = await freePort()
         }
-        await closeLease(reservation)
       } else gatewayPort = await freePort()
       let webPort = await freePort()
       while (webPort === gatewayPort) webPort = await freePort()
